@@ -1,0 +1,15 @@
+.DS_Store
+work/
+outputs/*
+!outputs/01-library-ios18.png
+!outputs/02-editor-ios18.png
+!outputs/03-review-ios18.png
+!outputs/VALIDATION.md
+DerivedData/
+*.xcuserstate
+xcuserdata/
+*.xcresult/
+*.ipa
+*.mobileprovision
+*.p12
+Secrets.*

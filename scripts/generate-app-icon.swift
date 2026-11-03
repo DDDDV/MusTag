@@ -1,0 +1,35 @@
+import AppKit
+
+// A small code-drawn icon; no downloaded artwork or third-party design assets.
+let size = NSSize(width: 1024, height: 1024)
+let image = NSImage(size: size)
+image.lockFocus()
+let background = NSBezierPath(rect: NSRect(origin: .zero, size: size))
+NSGradient(colors: [NSColor(calibratedRed: 0.22, green: 0.25, blue: 0.69, alpha: 1),
+                    NSColor(calibratedRed: 0.39, green: 0.34, blue: 0.86, alpha: 1)])!
+    .draw(in: background, angle: 55)
+let tag = NSBezierPath()
+tag.move(to: NSPoint(x: 255, y: 284))
+tag.line(to: NSPoint(x: 636, y: 284))
+tag.curve(to: NSPoint(x: 676, y: 304), controlPoint1: NSPoint(x: 654, y: 284), controlPoint2: NSPoint(x: 666, y: 290))
+tag.line(to: NSPoint(x: 813, y: 484))
+tag.curve(to: NSPoint(x: 813, y: 540), controlPoint1: NSPoint(x: 826, y: 502), controlPoint2: NSPoint(x: 826, y: 522))
+tag.line(to: NSPoint(x: 676, y: 720))
+tag.curve(to: NSPoint(x: 636, y: 740), controlPoint1: NSPoint(x: 666, y: 734), controlPoint2: NSPoint(x: 654, y: 740))
+tag.line(to: NSPoint(x: 255, y: 740))
+tag.curve(to: NSPoint(x: 215, y: 700), controlPoint1: NSPoint(x: 233, y: 740), controlPoint2: NSPoint(x: 215, y: 722))
+tag.line(to: NSPoint(x: 215, y: 324))
+tag.curve(to: NSPoint(x: 255, y: 284), controlPoint1: NSPoint(x: 215, y: 302), controlPoint2: NSPoint(x: 233, y: 284))
+tag.close()
+NSColor.white.setFill(); tag.fill()
+NSColor(calibratedRed: 0.30, green: 0.29, blue: 0.77, alpha: 1).setFill()
+NSBezierPath(ovalIn: NSRect(x: 711, y: 490, width: 44, height: 44)).fill()
+NSBezierPath(ovalIn: NSRect(x: 347, y: 379, width: 116, height: 83)).fill()
+NSBezierPath(roundedRect: NSRect(x: 427, y: 418, width: 36, height: 219), xRadius: 12, yRadius: 12).fill()
+let beam = NSBezierPath()
+beam.move(to: NSPoint(x: 445, y: 591)); beam.line(to: NSPoint(x: 575, y: 624))
+beam.line(to: NSPoint(x: 575, y: 675)); beam.line(to: NSPoint(x: 445, y: 642)); beam.close(); beam.fill()
+image.unlockFocus()
+let bitmap = NSBitmapImageRep(data: image.tiffRepresentation!)!
+let output = URL(fileURLWithPath: CommandLine.arguments[1])
+try bitmap.representation(using: .png, properties: [:])!.write(to: output)

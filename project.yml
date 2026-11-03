@@ -1,0 +1,124 @@
+name: MusTag
+options:
+  bundleIdPrefix: app.mustag
+  deploymentTarget:
+    iOS: "18.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "18.0"
+    CLANG_CXX_LANGUAGE_STANDARD: c++17
+    CLANG_CXX_LIBRARY: libc++
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    CODE_SIGN_STYLE: Automatic
+    GCC_PREPROCESSOR_DEFINITIONS: ["$(inherited)", "HAVE_CONFIG_H=1", "TAGLIB_STATIC=1"]
+    HEADER_SEARCH_PATHS:
+      - "$(SRCROOT)/Native/Config"
+      - "$(SRCROOT)/Native"
+      - "$(SRCROOT)/Vendor/taglib-2.3.2/taglib/**"
+      - "$(SRCROOT)/Vendor/utfcpp-4.0.6/source"
+      - "$(SRCROOT)/Vendor/chromaprint-1.6.2/src"
+targets:
+  TagLib:
+    type: library.static
+    platform: iOS
+    sources:
+      - path: Vendor/taglib-2.3.2/taglib
+        includes: ["**/*.cpp"]
+    settings:
+      base:
+        PRODUCT_NAME: TagLib
+        GCC_WARN_INHIBIT_ALL_WARNINGS: YES
+        SKIP_INSTALL: YES
+  Chromaprint:
+    type: library.static
+    platform: iOS
+    sources:
+      - path: Vendor/chromaprint-1.6.2/src
+        includes: ["*.cpp", "utils/base64.cpp", "avresample/resample2.c"]
+        excludes: ["*_test.cpp", "fft_lib_avfft.cpp", "fft_lib_avtx.cpp", "fft_lib_fftw3.cpp", "fft_lib_kissfft.cpp"]
+    settings:
+      base:
+        PRODUCT_NAME: Chromaprint
+        GCC_WARN_INHIBIT_ALL_WARNINGS: YES
+        SKIP_INSTALL: YES
+  MusTag:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+        excludes: ["Resources"]
+      - path: Native/MTTagBridge.mm
+      - path: Sources/Resources/Licenses
+        buildPhase: resources
+        type: folder
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.mustag.personal
+        PRODUCT_NAME: MusTag
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        MARKETING_VERSION: 0.1.0
+        CURRENT_PROJECT_VERSION: 1
+        SWIFT_OBJC_BRIDGING_HEADER: Native/MusTag-Bridging-Header.h
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SUPPORTS_MACCATALYST: NO
+        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
+    info:
+      path: Sources/Info.plist
+      properties:
+        CFBundleIdentifier: $(PRODUCT_BUNDLE_IDENTIFIER)
+        CFBundleExecutable: $(EXECUTABLE_NAME)
+        CFBundleName: $(PRODUCT_NAME)
+        CFBundlePackageType: APPL
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleDisplayName: MusTag
+        LSRequiresIPhoneOS: true
+        UILaunchScreen: {}
+        UIApplicationSupportsIndirectInputEvents: true
+        UISupportsDocumentBrowser: true
+        LSSupportsOpeningDocumentsInPlace: true
+        UIFileSharingEnabled: true
+        NSLocalNetworkUsageDescription: Access audio files you select on your NAS.
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        "UISupportedInterfaceOrientations~ipad": [UIInterfaceOrientationPortrait, UIInterfaceOrientationPortraitUpsideDown, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+    dependencies:
+      - target: TagLib
+      - target: Chromaprint
+      - sdk: Accelerate.framework
+      - sdk: AVFoundation.framework
+      - sdk: libz.tbd
+  MusTagTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests
+        excludes: [Fixtures]
+      - path: Tests/Fixtures
+        buildPhase: resources
+        type: folder
+    dependencies:
+      - target: MusTag
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: app.mustag.personal.tests
+  MusTagUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [UITests]
+    dependencies:
+      - target: MusTag
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: app.mustag.personal.uitests
+schemes:
+  MusTag:
+    build:
+      targets:
+        MusTag: all
+    test:
+      gatherCoverageData: true
+      targets: [MusTagTests, MusTagUITests]
