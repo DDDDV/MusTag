@@ -2,92 +2,108 @@ import SwiftUI
 
 struct LibraryView: View {
     @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        NavigationStack {
+            LibraryContentsView()
+                .navigationDestination(for: UUID.self) { id in
+                    TrackEditorView(documentID: id)
+                }
+                .navigationDestination(for: AudioFolder.self) { folder in
+                    LibraryContentsView(folder: folder)
+                }
+        }
+        .sheet(isPresented: $model.showsSettings) { SettingsView() }
+        .alert(L10n.text("Notice", "提示"), isPresented: Binding(get: { model.notice != nil && !model.showsSettings }, set: { if !$0 { model.notice = nil } })) {
+            Button(L10n.text("OK", "好"), role: .cancel) { model.notice = nil }
+        } message: {
+            Text(model.notice ?? "")
+        }
+    }
+}
+
+private struct LibraryContentsView: View {
+    @EnvironmentObject private var model: AppModel
+    var folder: AudioFolder? = nil
     @State private var picker: AudioPickerMode?
     @State private var selecting = false
     @State private var selected: Set<UUID> = []
     @State private var review: ReviewRequest?
 
-    private var targetIDs: Set<UUID> {
-        selecting ? selected : Set(model.documents.map(\.id))
+    // The home page acts on the whole library; a folder acts only on its own files.
+    private var scopeDocuments: [AudioDocument] {
+        if let folder { return model.documents(in: folder) }
+        return model.documents
     }
+    private var visibleDocuments: [AudioDocument] {
+        folder == nil ? model.standaloneDocuments : scopeDocuments
+    }
+    private var scopeIDs: Set<UUID> { Set(scopeDocuments.map(\.id)) }
+    private var targetIDs: Set<UUID> { selecting ? selected.intersection(scopeIDs) : scopeIDs }
     private var changedTargetIDs: [UUID] {
-        model.documents.filter { targetIDs.contains($0.id) && $0.hasChanges }.map(\.id)
+        scopeDocuments.filter { targetIDs.contains($0.id) && $0.hasChanges }.map(\.id)
+    }
+    private var isEmpty: Bool {
+        folder == nil ? model.documents.isEmpty && model.folders.isEmpty : scopeDocuments.isEmpty
     }
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if model.documents.isEmpty {
-                    ContentUnavailableView {
-                        Label(L10n.text("Your music, organized", "整理你的音乐"), systemImage: "music.note.list")
-                    } description: {
-                        Text(L10n.text("Edit MP3, FLAC and M4A files from Files, iCloud Drive or your NAS.", "编辑来自“文件”、iCloud Drive 或 NAS 的 MP3、FLAC 和 M4A 文件。"))
-                    } actions: {
-                        addMenu
-                            .buttonStyle(.borderedProminent)
-                            .disabled(model.isWorking)
-                    }
-                } else {
-                    List {
+        Group {
+            if isEmpty {
+                emptyState
+            } else {
+                List {
+                    if selecting {
                         Section {
-                            ForEach(model.documents) { document in
-                                if selecting {
-                                    Button {
-                                        if selected.contains(document.id) { selected.remove(document.id) }
-                                        else { selected.insert(document.id) }
-                                    } label: {
-                                        HStack(spacing: 12) {
-                                            Image(systemName: selected.contains(document.id) ? "checkmark.circle.fill" : "circle")
-                                                .font(.title3)
-                                                .foregroundStyle(selected.contains(document.id) ? Color.accentColor : .secondary)
-                                            AudioRow(document: document, candidateCount: model.candidates[document.id]?.count ?? 0)
-                                        }
-                                        .contentShape(Rectangle())
-                                    }
-                                    .buttonStyle(.plain)
-                                    .accessibilityAddTraits(selected.contains(document.id) ? [.isSelected] : [])
-                                } else {
-                                    NavigationLink(value: document.id) {
-                                        AudioRow(document: document, candidateCount: model.candidates[document.id]?.count ?? 0)
-                                    }
-                                    .accessibilityIdentifier("audioRow_\(document.fileName)")
-                                    .swipeActions {
-                                        Button(role: .destructive) { model.remove([document.id]) } label: {
-                                            Label(L10n.text("Remove from list", "从列表移除"), systemImage: "minus.circle")
-                                        }
-                                        .disabled(model.isWorking)
-                                    }
+                            HStack {
+                                Text(L10n.text("\(scopeDocuments.count) files", "\(scopeDocuments.count) 个文件"))
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                Button(selected == scopeIDs ? L10n.text("Deselect all", "取消全选") : L10n.text("Select all", "全选")) {
+                                    selected = selected == scopeIDs ? [] : scopeIDs
                                 }
+                                .accessibilityIdentifier("selectAllButton")
+                            }
+                            .font(.subheadline)
+                        }
+                    }
+                    if folder == nil, !model.folders.isEmpty {
+                        Section(L10n.text("Folders", "文件夹")) {
+                            ForEach(model.folders) { folder in
+                                folderRow(folder)
+                            }
+                        }
+                    }
+                    if !visibleDocuments.isEmpty {
+                        Section {
+                            ForEach(visibleDocuments) { document in
+                                audioRow(document)
                             }
                         } header: {
-                            HStack {
-                                Text(L10n.text("\(model.documents.count) files", "\(model.documents.count) 个文件"))
-                                Spacer()
-                                if selecting {
-                                    Button(selected.count == model.documents.count ? L10n.text("Deselect all", "取消全选") : L10n.text("Select all", "全选")) {
-                                        selected = selected.count == model.documents.count ? [] : Set(model.documents.map(\.id))
-                                    }
-                                    .textCase(nil)
-                                }
-                            }
+                            Text(folder == nil
+                                 ? L10n.text("Files · \(visibleDocuments.count)", "文件 · \(visibleDocuments.count)")
+                                 : L10n.text("\(visibleDocuments.count) files", "\(visibleDocuments.count) 个文件"))
                         }
                     }
-                    .listStyle(.insetGrouped)
+                }
+                .listStyle(.insetGrouped)
+            }
+        }
+        .navigationTitle(folder?.name ?? "MusTag")
+        .toolbar {
+            ToolbarItem(placement: folder == nil ? .topBarLeading : .topBarTrailing) {
+                if !scopeDocuments.isEmpty {
+                    Button(selecting ? L10n.text("Done", "完成") : L10n.text("Select", "选择")) {
+                        selecting.toggle()
+                        selected = []
+                    }
+                    .disabled(model.isWorking)
+                    .accessibilityIdentifier("librarySelectButton")
                 }
             }
-            .navigationTitle("MusTag")
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    if !model.documents.isEmpty {
-                        Button(selecting ? L10n.text("Done", "完成") : L10n.text("Select", "选择")) {
-                            selecting.toggle()
-                            selected = []
-                        }
-                        .disabled(model.isWorking)
-                    }
-                }
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    if !model.documents.isEmpty { addMenu.disabled(model.isWorking) }
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                if folder == nil {
+                    if !isEmpty { addMenu.disabled(model.isWorking) }
                     Button { model.showsSettings = true } label: {
                         Image(systemName: "gearshape")
                     }
@@ -95,44 +111,17 @@ struct LibraryView: View {
                     .accessibilityIdentifier("settingsButton")
                 }
             }
-            .safeAreaInset(edge: .bottom) {
-                if model.isWorking {
-                    OperationFooter()
-                } else if !model.documents.isEmpty {
-                    VStack(spacing: 8) {
-                        if selecting {
-                            Text(L10n.text("\(selected.count) selected", "已选 \(selected.count) 个"))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        HStack(spacing: 12) {
-                            Button { model.identify(targetIDs) } label: {
-                                Label(L10n.text("Identify", "识别"), systemImage: "waveform")
-                                    .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(.bordered)
-                            .disabled(targetIDs.isEmpty)
-                            .accessibilityIdentifier("identifyButton")
-                            Button { review = ReviewRequest(ids: changedTargetIDs) } label: {
-                                Text(L10n.text("Review \(changedTargetIDs.count)", "预览修改 \(changedTargetIDs.count)"))
-                                    .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(changedTargetIDs.isEmpty)
-                            .accessibilityIdentifier("reviewButton")
-                        }
-                        .controlSize(.large)
-                    }
-                    .padding(.horizontal)
-                    .padding(.top, 10)
-                    .padding(.bottom, 8)
-                    .background(.bar)
-                }
+        }
+        .safeAreaInset(edge: .bottom) {
+            if model.isWorking {
+                OperationFooter()
+            } else if !scopeDocuments.isEmpty {
+                batchActions
             }
-            .navigationDestination(for: UUID.self) { id in
-                TrackEditorView(documentID: id)
-            }
-            .onChange(of: model.documents.map(\.id)) { _, ids in selected.formIntersection(ids) }
+        }
+        .onChange(of: scopeIDs) { _, ids in
+            selected.formIntersection(ids)
+            if ids.isEmpty { selecting = false }
         }
         .sheet(item: $picker) { mode in
             AudioDocumentPicker(mode: mode, onPick: { urls in
@@ -140,13 +129,158 @@ struct LibraryView: View {
                 picker = nil
             }, onCancel: { picker = nil })
         }
-        .sheet(isPresented: $model.showsSettings) { SettingsView() }
         .sheet(item: $review) { request in ReviewSheet(documentIDs: request.ids) }
-        .alert(L10n.text("Notice", "提示"), isPresented: Binding(get: { model.notice != nil && !model.showsSettings }, set: { if !$0 { model.notice = nil } })) {
-            Button(L10n.text("OK", "好"), role: .cancel) { model.notice = nil }
-        } message: {
-            Text(model.notice ?? "")
+    }
+
+    @ViewBuilder
+    private var emptyState: some View {
+        if folder != nil {
+            ContentUnavailableView {
+                Label(L10n.text("No audio files", "暂无音频文件"), systemImage: "folder")
+            } description: {
+                Text(L10n.text("This folder has no imported MP3, FLAC or M4A files. Choose it again from the home page to refresh its contents.", "此文件夹中暂无已导入的 MP3、FLAC 或 M4A 文件。可在首页重新选择此文件夹以刷新内容。"))
+            }
+            .accessibilityIdentifier("folderEmptyState")
+        } else {
+            ContentUnavailableView {
+                Label(L10n.text("Your music, organized", "整理你的音乐"), systemImage: "music.note.list")
+            } description: {
+                Text(L10n.text("Edit MP3, FLAC and M4A files from Files, iCloud Drive or your NAS.", "编辑来自“文件”、iCloud Drive 或 NAS 的 MP3、FLAC 和 M4A 文件。"))
+            } actions: {
+                addMenu
+                    .buttonStyle(.borderedProminent)
+                    .disabled(model.isWorking)
+            }
         }
+    }
+
+    private func folderRow(_ folder: AudioFolder) -> some View {
+        let documents = model.documents(in: folder)
+        let ids = Set(documents.map(\.id))
+        let selectedCount = selected.intersection(ids).count
+        return HStack(spacing: 12) {
+            if selecting {
+                Button {
+                    if ids.isSubset(of: selected) { selected.subtract(ids) }
+                    else { selected.formUnion(ids) }
+                } label: {
+                    Image(systemName: selectedCount == 0 ? "circle" : selectedCount == ids.count ? "checkmark.circle.fill" : "minus.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(selectedCount > 0 ? Color.accentColor : .secondary)
+                        .frame(minWidth: 32, minHeight: 44)
+                }
+                .buttonStyle(.borderless)
+                .disabled(ids.isEmpty || model.isWorking)
+                .accessibilityLabel(L10n.text("Select files in \(folder.name)", "选择“\(folder.name)”中的文件"))
+                .accessibilityValue(L10n.text("\(selectedCount) of \(ids.count) selected", "已选 \(selectedCount) 个，共 \(ids.count) 个"))
+            }
+            NavigationLink(value: folder) {
+                HStack(spacing: 12) {
+                    Image(systemName: "folder.fill")
+                        .font(.title2)
+                        .foregroundStyle(.indigo)
+                        .frame(width: 44, height: 44)
+                        .background(.indigo.opacity(0.1), in: RoundedRectangle(cornerRadius: 7))
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(folder.name)
+                            .font(.body.weight(.medium))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                        Text(L10n.text("\(documents.count) audio files", "\(documents.count) 个音频文件"))
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        if model.folders.filter({ $0.name == folder.name }).count > 1 {
+                            Text(folder.url.deletingLastPathComponent().path)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                        let changedCount = documents.filter(\.hasChanges).count
+                        if changedCount > 0 {
+                            Text(L10n.text("\(changedCount) changes to review", "\(changedCount) 个文件有待确认的修改"))
+                                .font(.caption)
+                                .foregroundStyle(.indigo)
+                        }
+                    }
+                }
+                .padding(.vertical, 3)
+            }
+            .accessibilityIdentifier("folderRow_\(folder.name)")
+        }
+        .swipeActions {
+            if !selecting {
+                Button(role: .destructive) { model.removeFolder(folder) } label: {
+                    Label(L10n.text("Remove from list", "从列表移除"), systemImage: "minus.circle")
+                }
+                .disabled(model.isWorking)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func audioRow(_ document: AudioDocument) -> some View {
+        if selecting {
+            Button {
+                if selected.contains(document.id) { selected.remove(document.id) }
+                else { selected.insert(document.id) }
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: selected.contains(document.id) ? "checkmark.circle.fill" : "circle")
+                        .font(.title3)
+                        .foregroundStyle(selected.contains(document.id) ? Color.accentColor : .secondary)
+                    AudioRow(document: document, candidateCount: model.candidates[document.id]?.count ?? 0)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(model.isWorking)
+            .accessibilityAddTraits(selected.contains(document.id) ? [.isSelected] : [])
+        } else {
+            NavigationLink(value: document.id) {
+                AudioRow(document: document, candidateCount: model.candidates[document.id]?.count ?? 0)
+            }
+            .accessibilityIdentifier("audioRow_\(document.fileName)")
+            .swipeActions {
+                Button(role: .destructive) { model.remove([document.id]) } label: {
+                    Label(L10n.text("Remove from list", "从列表移除"), systemImage: "minus.circle")
+                }
+                .disabled(model.isWorking)
+            }
+        }
+    }
+
+    private var batchActions: some View {
+        VStack(spacing: 8) {
+            if selecting {
+                Text(L10n.text("\(targetIDs.count) selected", "已选 \(targetIDs.count) 个"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("selectedCountLabel")
+            }
+            HStack(spacing: 12) {
+                Button { model.identify(targetIDs) } label: {
+                    Label(L10n.text("Identify", "识别"), systemImage: "waveform")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .disabled(targetIDs.isEmpty)
+                .accessibilityIdentifier("identifyButton")
+                Button { review = ReviewRequest(ids: changedTargetIDs) } label: {
+                    Text(L10n.text("Review \(changedTargetIDs.count)", "预览修改 \(changedTargetIDs.count)"))
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(changedTargetIDs.isEmpty)
+                .accessibilityIdentifier("reviewButton")
+            }
+            .controlSize(.large)
+        }
+        .padding(.horizontal)
+        .padding(.top, 10)
+        .padding(.bottom, 8)
+        .background(.bar)
     }
 
     private var addMenu: some View {

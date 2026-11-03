@@ -41,9 +41,22 @@ struct AudioDocument: Identifiable, Codable, Sendable {
     var draftArtwork: AudioArtwork? = nil
     // Missing on pre-artwork library entries; populated on their first refresh.
     var artworkVersion: Int? = 1
+    // Missing on older entries and empty for individually imported files.
+    var importFolderIDs: Set<String>? = nil
     var fileName: String { url.lastPathComponent }
     var hasArtworkChanges: Bool { originalArtwork != draftArtwork }
     var hasChanges: Bool { original != draft || hasArtworkChanges }
+}
+
+struct AudioFolder: Identifiable, Codable, Hashable, Sendable {
+    var url: URL
+    var id: String { url.standardizedFileURL.absoluteString }
+    var name: String { url.lastPathComponent }
+}
+
+struct AudioLibrary: Codable, Sendable {
+    var documents: [AudioDocument]
+    var folders: [AudioFolder]
 }
 
 struct MetadataCandidate: Identifiable, Sendable {
@@ -71,6 +84,7 @@ struct BackupRecord: Identifiable, Codable, Sendable {
 struct ImportResult: Sendable {
     var documents: [AudioDocument]
     var failures: [String]
+    var folders: [AudioFolder] = []
 }
 
 protocol AudioMetadataCodec: Sendable {

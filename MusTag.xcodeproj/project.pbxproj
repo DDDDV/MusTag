@@ -120,6 +120,7 @@
 		8A80417D5A9AEDFF15A4AA50 /* ArtworkFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACA7ADB6162DCCACA2AFA735 /* ArtworkFlowTests.swift */; };
 		8C08CD8F59E9BA794BF3C105 /* id3v2synchdata.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 72FC0F7767F87CB4B9DEAB3C /* id3v2synchdata.cpp */; };
 		8C80EA53C22B6FA2D1E245DA /* tfile.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 462E861CCE80F764978CD96B /* tfile.cpp */; };
+		8C927EAD8FBC778AA0D9B425 /* LibraryFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C91B40993998C25BB81D43E /* LibraryFlowTests.swift */; };
 		8D11E32FE07760A99BBD353D /* CoverArtService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 709F04E888C53C79B6CE88BB /* CoverArtService.swift */; };
 		90189E0BD1E87E985E1C0225 /* CoverArtServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E5A0DBB261EC23B41C9B0B5 /* CoverArtServiceTests.swift */; };
 		910CE456174A18A89F5AE065 /* mpcproperties.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 54CA9D21F0047E403FCE3CD1 /* mpcproperties.cpp */; };
@@ -276,6 +277,7 @@
 		29CE7F1166CFAF42D641568B /* ebmlfloatelement.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ebmlfloatelement.cpp; sourceTree = "<group>"; };
 		2A6F9BCE855A201251087067 /* ownershipframe.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ownershipframe.cpp; sourceTree = "<group>"; };
 		2C038173DA70FE2EF9A1876E /* aifffile.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = aifffile.cpp; sourceTree = "<group>"; };
+		2C91B40993998C25BB81D43E /* LibraryFlowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryFlowTests.swift; sourceTree = "<group>"; };
 		2F2CB705542CDD2793666BCE /* TrackEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackEditorView.swift; sourceTree = "<group>"; };
 		30A62C0C4C512A59391BF301 /* shortenfile.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = shortenfile.cpp; sourceTree = "<group>"; };
 		31EDFCF8FE1C1680D4B1EA7D /* flacfile.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = flacfile.cpp; sourceTree = "<group>"; };
@@ -1004,6 +1006,7 @@
 				C555F0107DC55686186D5626 /* AudioFileStoreTests.swift */,
 				0E5A0DBB261EC23B41C9B0B5 /* CoverArtServiceTests.swift */,
 				611076F922DC87F6F4D79C69 /* Fixtures */,
+				2C91B40993998C25BB81D43E /* LibraryFlowTests.swift */,
 				4004D5F6EF721D62A5F28880 /* MusicRecognitionTests.swift */,
 				72097A2B45740AF7A85AAB7B /* NativeAudioTests.swift */,
 			);
@@ -1421,6 +1424,7 @@
 				8A80417D5A9AEDFF15A4AA50 /* ArtworkFlowTests.swift in Sources */,
 				EAB69EBD857E0943301D76C5 /* AudioFileStoreTests.swift in Sources */,
 				90189E0BD1E87E985E1C0225 /* CoverArtServiceTests.swift in Sources */,
+				8C927EAD8FBC778AA0D9B425 /* LibraryFlowTests.swift in Sources */,
 				E42805FE005B783CE55F5851 /* MusicRecognitionTests.swift in Sources */,
 				F7369280A063F1715E86E7BB /* NativeAudioTests.swift in Sources */,
 			);

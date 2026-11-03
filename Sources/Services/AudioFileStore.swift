@@ -33,7 +33,8 @@ actor AudioFileStore {
         try prepareStorage()
         var documents: [AudioDocument] = []
         var failures: [String] = []
-        var seen = Set<String>()
+        var folders: [AudioFolder] = []
+        var seen: [String: Int] = [:]
 
         do {
             for root in urls {
@@ -59,6 +60,8 @@ actor AudioFileStore {
                             throw message("This folder could not be read. Reconnect the drive and select it again.",
                                           "无法读取此文件夹。请重新连接存储位置并再次选择。")
                         }
+                        let folder = AudioFolder(url: root.standardizedFileURL)
+                        if !folders.contains(where: { $0.id == folder.id }) { folders.append(folder) }
 
                         for case let file as URL in enumerator {
                             try Task.checkCancellation()
@@ -67,7 +70,7 @@ actor AudioFileStore {
                                 if values.isSymbolicLink == true { enumerator.skipDescendants(); continue }
                                 guard values.isRegularFile == true,
                                       Self.supportedExtensions.contains(file.pathExtension.lowercased()) else { continue }
-                                try importOne(file, seen: &seen, documents: &documents)
+                                try importOne(file, folderID: folder.id, seen: &seen, documents: &documents)
                             } catch is CancellationError {
                                 throw CancellationError()
                             } catch {
@@ -87,10 +90,10 @@ actor AudioFileStore {
                 }
             }
         } catch is CancellationError {
-            guard !documents.isEmpty else { throw CancellationError() }
-            failures.append(L10n.text("Import stopped. Files already imported were kept.", "导入已停止，已导入的文件已保留。"))
+            guard !documents.isEmpty || !folders.isEmpty else { throw CancellationError() }
+            failures.append(L10n.text("Import stopped. Items already imported were kept.", "导入已停止，已导入的项目已保留。"))
         }
-        return ImportResult(documents: documents, failures: failures)
+        return ImportResult(documents: documents, failures: failures, folders: folders)
     }
 
     func save(_ document: AudioDocument) throws -> (AudioDocument, BackupRecord) {
@@ -253,7 +256,12 @@ actor AudioFileStore {
             error: nil, sourceHash: backup.originalHash,
             originalArtwork: snapshot.artwork, draftArtwork: snapshot.artwork
         )
-        do { try updatePersistedDocument(document) } catch {
+        do {
+            document.importFolderIDs = try readLibrary().documents.first {
+                $0.id == document.id || $0.url.standardizedFileURL == document.url.standardizedFileURL
+            }?.importFolderIDs
+            try updatePersistedDocument(document)
+        } catch {
             document.error = L10n.text(
                 "Restored, but the library list could not be updated. Reimport this file before editing again.",
                 "文件已恢复，但列表状态保存失败。再次编辑前请重新导入此文件。"
@@ -263,9 +271,13 @@ actor AudioFileStore {
     }
 
     func loadDocuments() throws -> [AudioDocument] {
+        try loadLibrary().documents
+    }
+
+    func loadLibrary() throws -> AudioLibrary {
         try prepareStorage()
-        guard manager.fileExists(atPath: documentsURL.path) else { return [] }
-        var documents = try JSONDecoder().decode([AudioDocument].self, from: Data(contentsOf: documentsURL))
+        var library = try readLibrary()
+        var documents = library.documents
         for index in documents.indices {
             do {
                 let url = try resolvedURL(for: documents[index].url, bookmark: documents[index].bookmark)
@@ -291,17 +303,31 @@ actor AudioFileStore {
                 )
             }
         }
-        return documents
+        library.documents = documents
+        return library
     }
 
     func persistDocuments(_ documents: [AudioDocument]) throws {
         try prepareStorage()
-        try writeJSON(documents, to: documentsURL)
+        var library = try readLibrary()
+        library.documents = documents
+        try persistLibrary(library)
     }
 
-    private func importOne(_ source: URL, seen: inout Set<String>, documents: inout [AudioDocument]) throws {
+    func persistLibrary(_ library: AudioLibrary) throws {
+        try prepareStorage()
+        try writeJSON(library, to: documentsURL)
+    }
+
+    private func importOne(_ source: URL, folderID: String? = nil,
+                           seen: inout [String: Int], documents: inout [AudioDocument]) throws {
         let identity = source.standardizedFileURL.absoluteString
-        guard seen.insert(identity).inserted else { return }
+        if let index = seen[identity] {
+            if let folderID {
+                documents[index].importFolderIDs = (documents[index].importFolderIDs ?? []).union([folderID])
+            }
+            return
+        }
         let workspace = try makeWorkspace()
         defer { try? manager.removeItem(at: workspace) }
         let staged = workspace.appendingPathComponent("original").appendingPathExtension(source.pathExtension)
@@ -313,8 +339,10 @@ actor AudioFileStore {
             url: source, bookmark: try refreshedBookmark(source, fallback: nil),
             original: snapshot.tags, draft: snapshot.tags, duration: snapshot.duration,
             error: nil, sourceHash: hash,
-            originalArtwork: snapshot.artwork, draftArtwork: snapshot.artwork
+            originalArtwork: snapshot.artwork, draftArtwork: snapshot.artwork,
+            importFolderIDs: folderID.map { Set([$0]) }
         ))
+        seen[identity] = documents.count - 1
     }
 
     private func prepareStorage() throws {
@@ -446,17 +474,27 @@ actor AudioFileStore {
         }
     }
 
+    private func readLibrary() throws -> AudioLibrary {
+        guard manager.fileExists(atPath: documentsURL.path) else {
+            return AudioLibrary(documents: [], folders: [])
+        }
+        let data = try Data(contentsOf: documentsURL)
+        let decoder = JSONDecoder()
+        // Earlier versions persisted the document array directly without import origins.
+        if let documents = try? decoder.decode([AudioDocument].self, from: data) {
+            return AudioLibrary(documents: documents, folders: [])
+        }
+        return try decoder.decode(AudioLibrary.self, from: data)
+    }
+
     private func updatePersistedDocument(_ document: AudioDocument) throws {
-        var documents: [AudioDocument] = []
-        if manager.fileExists(atPath: documentsURL.path) {
-            documents = try JSONDecoder().decode([AudioDocument].self, from: Data(contentsOf: documentsURL))
-        }
-        if let index = documents.firstIndex(where: { $0.id == document.id }) {
-            documents[index] = document
+        var library = try readLibrary()
+        if let index = library.documents.firstIndex(where: { $0.id == document.id }) {
+            library.documents[index] = document
         } else {
-            documents.append(document)
+            library.documents.append(document)
         }
-        try writeJSON(documents, to: documentsURL)
+        try writeJSON(library, to: documentsURL)
     }
 
     private func writeJSON<T: Encodable>(_ value: T, to url: URL) throws {

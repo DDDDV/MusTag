@@ -7,6 +7,7 @@ import AVFoundation
 @MainActor
 final class AppModel: ObservableObject {
     @Published var documents: [AudioDocument] = []
+    @Published var folders: [AudioFolder] = []
     @Published var candidates: [UUID: [MetadataCandidate]] = [:]
     @Published var backupRecords: [BackupRecord] = []
     @Published var apiKey = APIKeyStore.load()
@@ -67,15 +68,43 @@ final class AppModel: ObservableObject {
     var isWorking: Bool { operation != nil }
     var hasAPIKey: Bool { !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     var changedDocuments: [AudioDocument] { documents.filter(\.hasChanges) }
+    var standaloneDocuments: [AudioDocument] {
+        documents.filter { ($0.importFolderIDs ?? []).isEmpty }
+    }
+
+    func documents(in folder: AudioFolder) -> [AudioDocument] {
+        documents.filter { $0.importFolderIDs?.contains(folder.id) == true }
+    }
 
     func load() async {
         guard !loaded else { return }
         loaded = true
         do {
-            documents = try await fileStore.loadDocuments()
+            let library = try await fileStore.loadLibrary()
+            documents = library.documents
+            folders = library.folders
             backupRecords = try await fileStore.backups()
             #if DEBUG
-            if ProcessInfo.processInfo.arguments.contains("--ui-testing-with-audio"),
+            if ProcessInfo.processInfo.arguments.contains("--ui-testing-with-folders"),
+               let directory = uiTestDirectory {
+                let fixture = try Self.makeUITestAudio(in: directory)
+                let music = directory.appendingPathComponent("Music Folder", isDirectory: true)
+                let nested = music.appendingPathComponent("Disc 2", isDirectory: true)
+                let other = directory.appendingPathComponent("Other Folder", isDirectory: true)
+                let empty = directory.appendingPathComponent("Empty Folder", isDirectory: true)
+                for folder in [nested, other, empty] {
+                    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                }
+                for (folder, name) in [(music, "Folder Track"), (nested, "Nested Track"), (other, "Other Track")] {
+                    let url = folder.appendingPathComponent(name).appendingPathExtension("m4a")
+                    try FileManager.default.copyItem(at: fixture, to: url)
+                    try NativeMetadataCodec().write(AudioTags(title: name, artist: "Test artist"), to: url)
+                }
+                let result = try await fileStore.importFiles(from: [fixture, music, other, empty])
+                documents = result.documents
+                folders = result.folders
+                if !result.failures.isEmpty { throw MusTagError.message(result.failures.joined(separator: "\n")) }
+            } else if ProcessInfo.processInfo.arguments.contains("--ui-testing-with-audio"),
                let directory = uiTestDirectory {
                 let fixture = try Self.makeUITestAudio(in: directory)
                 let result = try await fileStore.importFiles(from: [fixture])
@@ -174,6 +203,18 @@ final class AppModel: ObservableObject {
         schedulePersistence()
     }
 
+    func removeFolder(_ folder: AudioFolder) {
+        guard !isWorking else { return }
+        let removedIDs = Set(documents.filter { $0.importFolderIDs == [folder.id] }.map(\.id))
+        documents.removeAll { removedIDs.contains($0.id) }
+        for index in documents.indices {
+            documents[index].importFolderIDs?.remove(folder.id)
+        }
+        removedIDs.forEach { candidates.removeValue(forKey: $0) }
+        folders.removeAll { $0.id == folder.id }
+        schedulePersistence()
+    }
+
     func importFiles(_ urls: [URL]) {
         guard !isWorking else { return }
         let scopedURLs = urls.filter { $0.startAccessingSecurityScopedResource() }
@@ -186,12 +227,21 @@ final class AppModel: ObservableObject {
             do {
                 let result = try await fileStore.importFiles(from: urls)
                 let failures = result.failures
+                for folder in result.folders {
+                    if let index = folders.firstIndex(where: { $0.id == folder.id }) {
+                        folders[index] = folder
+                    } else {
+                        folders.append(folder)
+                    }
+                }
                 var refreshedDrafts = 0
                 for incoming in result.documents {
                     if let index = documents.firstIndex(where: { $0.url.standardizedFileURL == incoming.url.standardizedFileURL }) {
                         let existing = documents[index]
                         var refreshed = incoming
                         refreshed.id = existing.id
+                        // Refreshing a file directly must keep its imported folder membership.
+                        refreshed.importFolderIDs = (existing.importFolderIDs ?? []).union(incoming.importFolderIDs ?? [])
                         if existing.hasChanges {
                             // Rebase only edited fields; preserve unrelated changes made by another app.
                             var draft = incoming.original
@@ -209,7 +259,7 @@ final class AppModel: ObservableObject {
                 await persistNow()
                 if !failures.isEmpty {
                     notice = L10n.text("Some files could not be imported:\n", "部分文件未能导入：\n") + failures.prefix(8).joined(separator: "\n")
-                } else if result.documents.isEmpty {
+                } else if result.documents.isEmpty && result.folders.isEmpty {
                     notice = L10n.text("No supported audio files found. Choose MP3, FLAC or M4A files.", "没有找到支持的音频文件。请选择 MP3、FLAC 或 M4A 文件。")
                 } else if refreshedDrafts > 0 {
                     notice = L10n.text("Original files refreshed. Your edited fields were kept in the draft; review them against the current file before saving.", "已重新读取原文件。你编辑过的字段仍保留在草稿中，请对照当前文件重新预览后保存。")
@@ -310,10 +360,15 @@ final class AppModel: ObservableObject {
         operationTask = Task {
             defer { finish() }
             do {
-                let restored = try await fileStore.restore(backup)
+                var restored = try await fileStore.restore(backup)
                 if let index = documents.firstIndex(where: { $0.id == restored.id || $0.url == restored.url }) {
+                    restored.importFolderIDs = documents[index].importFolderIDs
                     documents[index] = restored
-                } else { documents.append(restored) }
+                } else {
+                    // A just-removed folder may still be in the debounced on-disk index.
+                    restored.importFolderIDs = restored.importFolderIDs?.intersection(folders.map(\.id))
+                    documents.append(restored)
+                }
                 completedCount = 1
                 await persistNow()
                 await refreshBackups()
@@ -373,7 +428,7 @@ final class AppModel: ObservableObject {
         // Scene transitions can arrive while the initial actor read is still pending.
         // Never replace an unread or unreadable on-disk index with an empty model.
         guard canPersist else { return }
-        do { try await fileStore.persistDocuments(documents) }
+        do { try await fileStore.persistLibrary(AudioLibrary(documents: documents, folders: folders)) }
         catch { notice = error.localizedDescription }
     }
 

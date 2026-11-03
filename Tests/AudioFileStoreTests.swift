@@ -25,6 +25,119 @@ final class AudioFileStoreTests: XCTestCase {
         XCTAssertTrue(result.failures.isEmpty)
         XCTAssertEqual(result.documents[0].original.title, "Original")
         XCTAssertFalse(result.documents[0].sourceHash.isEmpty)
+        XCTAssertEqual(result.folders, [AudioFolder(url: album.standardizedFileURL)])
+        XCTAssertEqual(result.documents[0].importFolderIDs, Set([result.folders[0].id]))
+    }
+
+    func testIndividualFileImportDoesNotInferParentFolder() async throws {
+        let album = root.appendingPathComponent("Album", isDirectory: true)
+        try FileManager.default.createDirectory(at: album, withIntermediateDirectories: true)
+        let song = try fixture(directory: album)
+        let result = try await makeStore().importFiles(from: [song])
+        XCTAssertEqual(result.documents.count, 1)
+        XCTAssertTrue(result.folders.isEmpty)
+        XCTAssertNil(result.documents[0].importFolderIDs)
+    }
+
+    func testMixedNestedAndSameNamedFoldersKeepDistinctOriginsWithoutDuplicateFiles() async throws {
+        let firstAlbum = root.appendingPathComponent("First/Album", isDirectory: true)
+        let disc = firstAlbum.appendingPathComponent("Disc 1", isDirectory: true)
+        let otherAlbum = root.appendingPathComponent("Second/Album", isDirectory: true)
+        for directory in [disc, otherAlbum] {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+        let firstSong = try fixture("track.mp3", directory: firstAlbum)
+        let nestedSong = try fixture("track.flac", directory: disc)
+        let otherSong = try fixture("track.mp3", directory: otherAlbum)
+        let looseSong = try fixture("loose.m4a")
+        let result = try await makeStore().importFiles(from: [nestedSong, firstAlbum, disc, otherAlbum, firstAlbum, looseSong])
+
+        XCTAssertTrue(result.failures.isEmpty)
+        XCTAssertEqual(result.documents.count, 4)
+        XCTAssertEqual(result.folders.count, 3)
+        let firstID = AudioFolder(url: firstAlbum).id
+        let discID = AudioFolder(url: disc).id
+        let otherID = AudioFolder(url: otherAlbum).id
+        XCTAssertNotEqual(firstID, otherID, "Folders with the same name must stay separate")
+        let imported = Dictionary(uniqueKeysWithValues: result.documents.map { ($0.url.standardizedFileURL, $0) })
+        XCTAssertEqual(imported[firstSong.standardizedFileURL]?.importFolderIDs, Set([firstID]))
+        XCTAssertEqual(imported[nestedSong.standardizedFileURL]?.importFolderIDs, Set([firstID, discID]))
+        XCTAssertEqual(imported[otherSong.standardizedFileURL]?.importFolderIDs, Set([otherID]))
+        XCTAssertNil(imported[looseSong.standardizedFileURL]?.importFolderIDs)
+    }
+
+    func testEmptyFolderImportPersistsWithoutAudioDocuments() async throws {
+        let folder = root.appendingPathComponent("Empty Album", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try Data("not audio".utf8).write(to: folder.appendingPathComponent("notes.txt"))
+        let store = makeStore()
+        let result = try await store.importFiles(from: [folder, folder])
+        XCTAssertTrue(result.documents.isEmpty)
+        XCTAssertTrue(result.failures.isEmpty)
+        XCTAssertEqual(result.folders.count, 1)
+        try await store.persistLibrary(AudioLibrary(documents: result.documents, folders: result.folders))
+
+        let loaded = try await makeStore().loadLibrary()
+        XCTAssertTrue(loaded.documents.isEmpty)
+        XCTAssertEqual(loaded.folders, result.folders)
+    }
+
+    func testFolderMembershipAndDraftSurviveRelaunchSaveAndRestore() async throws {
+        let album = root.appendingPathComponent("Album", isDirectory: true)
+        let empty = root.appendingPathComponent("Empty", isDirectory: true)
+        for folder in [album, empty] {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        }
+        let song = try fixture(directory: album)
+        let originalBytes = try Data(contentsOf: song)
+        let store = makeStore()
+        let result = try await store.importFiles(from: [album, empty])
+        var document = try XCTUnwrap(result.documents.first)
+        document.draft.title = "Folder draft"
+        let memberships = document.importFolderIDs
+        try await store.persistLibrary(AudioLibrary(documents: [document], folders: result.folders))
+
+        let relaunched = makeStore()
+        var loaded = try await relaunched.loadLibrary()
+        XCTAssertEqual(loaded.folders, result.folders)
+        XCTAssertEqual(loaded.documents[0].importFolderIDs, memberships)
+        XCTAssertEqual(loaded.documents[0].draft.title, "Folder draft")
+        XCTAssertEqual(try Data(contentsOf: song), originalBytes)
+        // Existing callers that update only documents must retain folder records too.
+        try await relaunched.persistDocuments(loaded.documents)
+        let (saved, backup) = try await relaunched.save(loaded.documents[0])
+        XCTAssertEqual(saved.importFolderIDs, memberships)
+        loaded = try await makeStore().loadLibrary()
+        XCTAssertEqual(loaded.folders, result.folders)
+        XCTAssertEqual(loaded.documents[0].importFolderIDs, memberships)
+        XCTAssertFalse(loaded.documents[0].hasChanges)
+
+        let restored = try await makeStore().restore(backup)
+        XCTAssertEqual(restored.importFolderIDs, memberships)
+        loaded = try await makeStore().loadLibrary()
+        XCTAssertEqual(loaded.folders, result.folders)
+        XCTAssertEqual(loaded.documents[0].importFolderIDs, memberships)
+        XCTAssertEqual(try Data(contentsOf: song), originalBytes)
+    }
+
+    func testLegacyDocumentArrayLoadsAndMigratesWithoutInventingFolderOrigins() async throws {
+        let song = try fixture()
+        var document = try await firstDocument(song, store: makeStore())
+        document.draft.title = "Legacy draft"
+        let indexURL = root.appendingPathComponent("State/documents.json")
+        try JSONEncoder().encode([document]).write(to: indexURL)
+
+        let store = makeStore()
+        let loaded = try await store.loadLibrary()
+        XCTAssertTrue(loaded.folders.isEmpty)
+        XCTAssertEqual(loaded.documents.count, 1)
+        XCTAssertEqual(loaded.documents[0].id, document.id)
+        XCTAssertEqual(loaded.documents[0].draft.title, "Legacy draft")
+        XCTAssertNil(loaded.documents[0].importFolderIDs)
+        try await store.persistLibrary(loaded)
+        let migrated = try JSONDecoder().decode(AudioLibrary.self, from: Data(contentsOf: indexURL))
+        XCTAssertEqual(migrated.documents[0].id, document.id)
+        XCTAssertTrue(migrated.folders.isEmpty)
     }
 
     func testCoverOnlyDraftPersistsSavesAndRestores() async throws {

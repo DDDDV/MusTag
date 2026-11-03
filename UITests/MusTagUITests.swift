@@ -19,6 +19,84 @@ final class MusTagUITests: XCTestCase {
         XCTAssertTrue(app.buttons["chooseFolderButton"].exists)
     }
 
+    func testImportedFoldersSeparateFilesAndOpenNestedTracks() {
+        launchWithFolders()
+        let musicFolder = app.buttons["folderRow_Music Folder"]
+        XCTAssertTrue(musicFolder.waitForExistence(timeout: 15))
+        XCTAssertTrue(app.buttons["folderRow_Other Folder"].exists)
+        XCTAssertTrue(app.buttons["folderRow_Empty Folder"].exists)
+        XCTAssertTrue(app.buttons["audioRow_UI Test.m4a"].exists)
+        XCTAssertFalse(app.buttons["audioRow_Folder Track.m4a"].exists)
+        XCTAssertFalse(app.buttons["audioRow_Nested Track.m4a"].exists)
+        XCTAssertFalse(app.buttons["audioRow_Other Track.m4a"].exists)
+        capture("05-folder-library")
+
+        musicFolder.tap()
+        let nestedTrack = app.buttons["audioRow_Nested Track.m4a"]
+        XCTAssertTrue(nestedTrack.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["audioRow_Folder Track.m4a"].exists)
+        XCTAssertFalse(app.buttons["audioRow_UI Test.m4a"].exists)
+        XCTAssertFalse(app.buttons["audioRow_Other Track.m4a"].exists)
+        capture("06-folder-contents")
+        nestedTrack.tap()
+        XCTAssertTrue(app.navigationBars["Edit tags"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Nested Track.m4a"].exists)
+        app.navigationBars["Edit tags"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(nestedTrack.waitForExistence(timeout: 3))
+        app.navigationBars["Music Folder"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(musicFolder.waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["audioRow_UI Test.m4a"].exists)
+    }
+
+    func testEmptyImportedFolderCanBeOpenedAndReturnedFrom() {
+        launchWithFolders()
+        let emptyFolder = app.buttons["folderRow_Empty Folder"]
+        XCTAssertTrue(emptyFolder.waitForExistence(timeout: 15))
+        emptyFolder.tap()
+        let emptyState = app.descendants(matching: .any).matching(identifier: "folderEmptyState").firstMatch
+        XCTAssertTrue(emptyState.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["audioRow_UI Test.m4a"].exists)
+        app.navigationBars["Empty Folder"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(emptyFolder.waitForExistence(timeout: 3))
+    }
+
+    func testFolderSelectionAndReviewStayWithinTheFolder() {
+        launchWithFolders()
+        editTrack("UI Test.m4a", prefix: "Standalone ")
+        let musicFolder = app.buttons["folderRow_Music Folder"]
+        XCTAssertTrue(musicFolder.waitForExistence(timeout: 5))
+        musicFolder.tap()
+        editTrack("Folder Track.m4a", prefix: "Folder ")
+
+        let select = app.buttons["librarySelectButton"]
+        XCTAssertTrue(select.waitForExistence(timeout: 5))
+        select.tap()
+        let selectedCount = app.staticTexts["selectedCountLabel"]
+        XCTAssertEqual(selectedCount.label, "0 selected")
+        app.buttons["selectAllButton"].tap()
+        XCTAssertEqual(selectedCount.label, "2 selected")
+        let review = app.buttons["reviewButton"]
+        XCTAssertEqual(review.label, "Review 1")
+        review.tap()
+        let save = app.buttons["confirmSaveButton"]
+        XCTAssertTrue(save.waitForExistence(timeout: 5))
+        XCTAssertEqual(save.label, "Save 1 file")
+        XCTAssertTrue(app.staticTexts["Folder Track.m4a"].exists)
+        XCTAssertFalse(app.staticTexts["UI Test.m4a"].exists)
+        XCTAssertFalse(app.staticTexts["Other Track.m4a"].exists)
+        app.buttons["Cancel"].tap()
+
+        XCTAssertTrue(select.waitForExistence(timeout: 3))
+        select.tap()
+        app.navigationBars["Music Folder"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(musicFolder.waitForExistence(timeout: 3))
+        XCTAssertEqual(app.buttons["reviewButton"].label, "Review 2")
+        app.buttons["librarySelectButton"].tap()
+        XCTAssertEqual(selectedCount.label, "0 selected")
+        app.buttons["selectAllButton"].tap()
+        XCTAssertEqual(selectedCount.label, "4 selected")
+    }
+
     func testMissingKeyCanBeConfiguredWithoutNetwork() {
         app.buttons["settingsButton"].tap()
         let status = app.descendants(matching: .any).matching(identifier: "recognitionStatus").firstMatch
@@ -151,6 +229,24 @@ final class MusTagUITests: XCTestCase {
         app.terminate()
         app.launchArguments.append("--ui-testing-with-audio")
         app.launch()
+    }
+
+    private func launchWithFolders() {
+        app.terminate()
+        app.launchArguments.append("--ui-testing-with-folders")
+        app.launch()
+    }
+
+    private func editTrack(_ fileName: String, prefix: String) {
+        let audio = app.buttons["audioRow_\(fileName)"]
+        XCTAssertTrue(audio.waitForExistence(timeout: 15))
+        audio.tap()
+        let title = app.descendants(matching: .any).matching(identifier: "tag_title").firstMatch
+        XCTAssertTrue(title.waitForExistence(timeout: 5))
+        title.tap()
+        title.typeText(prefix)
+        app.navigationBars["Edit tags"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(audio.waitForExistence(timeout: 3))
     }
 
     private func capture(_ name: String) {
