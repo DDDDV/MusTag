@@ -147,6 +147,103 @@ final class MusicRecognitionTests: XCTestCase {
         }
     }
 
+    func testHTTP400InvalidKeyExplainsApplicationKeyWithoutRetrying() async throws {
+        let message = try await identificationError(status: 400, body: """
+        {"error":{"code":4,"message":"invalid API key"},"status":"error"}
+        """)
+        XCTAssertTrue(message.contains("AcoustID"))
+        XCTAssertTrue(message.localizedCaseInsensitiveContains("Application API Key"))
+        XCTAssertTrue(message.localizedCaseInsensitiveContains("User API Key"))
+        XCTAssertTrue(message.contains("HTTP 400"))
+        XCTAssertFalse(message.contains("private-key"))
+    }
+
+    func testHTTP200AcoustIDErrorStillExplainsApplicationKey() async throws {
+        let message = try await identificationError(status: 200, body: """
+        {"error":{"code":4,"message":"invalid API key"},"status":"error"}
+        """)
+        XCTAssertTrue(message.localizedCaseInsensitiveContains("Application API Key"))
+        XCTAssertTrue(message.localizedCaseInsensitiveContains("User API Key"))
+    }
+
+    func testHTTP400InvalidFingerprintIsNotReportedAsKeyFailure() async throws {
+        let message = try await identificationError(status: 400, body: """
+        {"error":{"code":3,"message":"invalid fingerprint"},"status":"error"}
+        """)
+        XCTAssertTrue(message.contains(L10n.text("fingerprint", "指纹")))
+        XCTAssertTrue(message.contains("HTTP 400"))
+        XCTAssertFalse(message.localizedCaseInsensitiveContains("API Key"))
+    }
+
+    func testHTTP400InvalidDurationIsNotReportedAsKeyFailure() async throws {
+        let message = try await identificationError(status: 400, body: """
+        {"error":{"code":8,"message":"invalid duration"},"status":"error"}
+        """)
+        XCTAssertTrue(message.contains(L10n.text("duration", "时长")))
+        XCTAssertTrue(message.contains("HTTP 400"))
+        XCTAssertFalse(message.localizedCaseInsensitiveContains("API Key"))
+    }
+
+    func testAcoustIDInternalErrorIsNeverReportedAsInvalidKey() async throws {
+        for status in [200, 500] {
+            let message = try await identificationError(status: status, body: """
+            {"error":{"code":5,"message":"internal error"},"status":"error"}
+            """)
+            XCTAssertTrue(message.contains("AcoustID"))
+            XCTAssertTrue(message.contains(L10n.text("internal", "内部")))
+            XCTAssertFalse(message.localizedCaseInsensitiveContains("API Key"))
+        }
+    }
+
+    func testUnknownAcoustIDErrorPreservesProviderAndStatusWithoutEchoingBody() async throws {
+        let message = try await identificationError(status: 400, body: """
+        {"error":{"code":999,"message":"rejected private-key and test-fingerprint"},"status":"error"}
+        """)
+        XCTAssertTrue(message.contains("AcoustID"))
+        XCTAssertTrue(message.contains("HTTP 400"))
+        XCTAssertTrue(message.contains("999"))
+        XCTAssertFalse(message.contains("private-key"))
+        XCTAssertFalse(message.contains("test-fingerprint"))
+        XCTAssertFalse(message.contains(L10n.text("unavailable", "暂不可用")))
+    }
+
+    func testHTTP400HTMLResponseHasSafeRequestErrorFallback() async throws {
+        let message = try await identificationError(status: 400,
+            body: "<html><body>Bad request: client=private-key</body></html>")
+        XCTAssertTrue(message.contains("AcoustID"))
+        XCTAssertTrue(message.contains("HTTP 400"))
+        XCTAssertTrue(message.contains(L10n.text("request", "请求")))
+        XCTAssertFalse(message.contains("<html>"))
+        XCTAssertFalse(message.contains("private-key"))
+        XCTAssertFalse(message.contains("DecodingError"))
+        XCTAssertFalse(message.contains(L10n.text("unavailable", "暂不可用")))
+    }
+
+    private func identificationError(status: Int, body: String) async throws -> String {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let source = directory.appendingPathComponent("sample.mp3")
+        try Data("private audio content".utf8).write(to: source)
+        RecognitionURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.host, "api.acoustid.org", "Failed lookups must not continue to MusicBrainz")
+            XCTAssertEqual(request.url?.path, "/v2/lookup")
+            return (status, Data(body.utf8))
+        }
+        let initialRequestCount = RecognitionURLProtocol.requestCount
+        let service = MusicRecognitionService(session: session(), minimumMusicBrainzInterval: 0,
+            minimumAcoustIDInterval: 0, fingerprintProvider: { _ in ("test-fingerprint", 120.6) })
+        do {
+            _ = try await service.identify(url: source, apiKey: "private-key")
+            XCTFail("Expected AcoustID lookup to fail")
+            return ""
+        } catch {
+            XCTAssertEqual(RecognitionURLProtocol.requestCount - initialRequestCount, 1,
+                           "Invalid requests and internal errors must not be retried")
+            return error.localizedDescription
+        }
+    }
+
     private func session() -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [RecognitionURLProtocol.self]

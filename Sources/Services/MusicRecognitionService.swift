@@ -68,12 +68,7 @@ actor MusicRecognitionService {
         let data = try await fetch(request, provider: .acoustID)
         let response: AcoustIDResponse = try decode(data)
         guard response.status == "ok" else {
-            if response.error?.code == 4 || response.error?.code == 5 {
-                throw MusTagError.message(L10n.text("AcoustID rejected the API key. Use an application key, not a user submission key.",
-                                                   "AcoustID 拒绝了此 API Key，请使用应用 Key，而非用户提交指纹用的 Key。"))
-            }
-            throw MusTagError.message(L10n.text("AcoustID could not complete this lookup. Check your key and try again.",
-                                               "AcoustID 无法完成查询，请检查 Key 后重试。"))
+            throw Self.acoustIDError(response.error)
         }
         let matches = Self.recordingMatches(from: response)
         var candidates: [MetadataCandidate] = []
@@ -160,7 +155,47 @@ actor MusicRecognitionService {
         return URLRequest(url: components.url!)
     }
 
-    private enum Provider { case musicBrainz, acoustID }
+    private enum Provider {
+        case musicBrainz, acoustID
+
+        var name: String { self == .acoustID ? "AcoustID" : "MusicBrainz" }
+    }
+
+    private static func acoustIDError(_ error: AcoustIDError?, httpStatus: Int? = nil) -> MusTagError {
+        // Interpret documented codes, never echo the response message: it may contain request data.
+        // AcoustID code 5 is an internal error; only 4/17 identify an invalid application key.
+        let message: String
+        switch error?.code {
+        case 4, 17:
+            message = L10n.text(
+                "AcoustID rejected the Application API Key. In Settings, get a key by registering an application. The personal User API Key cannot be used for recognition.",
+                "AcoustID 拒绝了应用 Key。请在设置中通过“获取 AcoustID 应用 Key”注册应用，填写 Application API Key；个人页面的 User API Key 不能用于识别。")
+        case 2:
+            message = L10n.text("The AcoustID request is missing a required parameter.",
+                                "AcoustID 请求缺少必填参数。")
+        case 3:
+            message = L10n.text("AcoustID rejected the audio fingerprint. Try another audio file or search by title.",
+                                "AcoustID 无法接受此音频指纹，请尝试其他音频文件或按歌名搜索。")
+        case 8:
+            message = L10n.text("AcoustID rejected the audio duration. Check that the file plays correctly or search by title.",
+                                "AcoustID 无法接受此音频时长，请检查文件能否正常播放，或按歌名搜索。")
+        case 5:
+            message = L10n.text("AcoustID encountered an internal server error. Try again later.",
+                                "AcoustID 服务发生内部错误，请稍后重试。")
+        case 13:
+            message = L10n.text("AcoustID is temporarily unavailable. Try again later.",
+                                "AcoustID 服务暂不可用，请稍后重试。")
+        case 14:
+            message = L10n.text("AcoustID received too many requests. Try again later.",
+                                "AcoustID 请求过于频繁，请稍后重试。")
+        default:
+            message = L10n.text("AcoustID could not complete this lookup. Check the request parameters and try again.",
+                                "AcoustID 无法完成查询，请检查请求参数后重试。")
+        }
+        let details = [httpStatus.map { "HTTP \($0)" }, error?.code.map { "AcoustID \($0)" }]
+            .compactMap { $0 }.joined(separator: "; ")
+        return .message(details.isEmpty ? message : "\(message) (\(details))")
+    }
 
     private func fetch(_ baseRequest: URLRequest, provider: Provider) async throws -> Data {
         var request = baseRequest
@@ -190,16 +225,28 @@ actor MusicRecognitionService {
                 try await Task.sleep(nanoseconds: UInt64(retry * 1_000_000_000))
                 continue
             }
-            guard (200..<300).contains(http.statusCode) else {
-                if http.statusCode == 401 || http.statusCode == 403 {
-                    throw MusTagError.message(L10n.text("The service denied access. Check the API key and service permissions.",
-                                                       "服务拒绝访问，请检查 API Key 和服务权限。"))
-                }
-                throw MusTagError.message(L10n.text("The recognition service is unavailable (HTTP \(http.statusCode)). Try again later.",
-                                                   "识别服务暂不可用（HTTP \(http.statusCode)），请稍后重试。"))
-            }
             guard data.count <= 4 * 1024 * 1024 else {
                 throw MusTagError.message(L10n.text("The metadata response was too large.", "元数据响应过大。"))
+            }
+            guard (200..<300).contains(http.statusCode) else {
+                // AcoustID sends validation failures as HTTP 400 with a structured JSON body.
+                // Parse it before the generic HTTP fallback so the actionable reason survives.
+                if provider == .acoustID,
+                   let failure = try? JSONDecoder().decode(AcoustIDResponse.self, from: data),
+                   failure.status == "error" {
+                    throw Self.acoustIDError(failure.error, httpStatus: http.statusCode)
+                }
+                if http.statusCode == 400 {
+                    throw MusTagError.message(L10n.text(
+                        "\(provider.name) rejected the request (HTTP 400). Check the request parameters and try again.",
+                        "\(provider.name) 拒绝了请求（HTTP 400），请检查请求参数后重试。"))
+                }
+                if http.statusCode == 401 || http.statusCode == 403 {
+                    throw MusTagError.message(L10n.text("\(provider.name) denied access (HTTP \(http.statusCode)). Check the API key and service permissions.",
+                                                       "\(provider.name) 拒绝访问（HTTP \(http.statusCode)），请检查 API Key 和服务权限。"))
+                }
+                throw MusTagError.message(L10n.text("\(provider.name) is unavailable (HTTP \(http.statusCode)). Try again later.",
+                                                   "\(provider.name) 服务暂不可用（HTTP \(http.statusCode)），请稍后重试。"))
             }
             return data
         }
