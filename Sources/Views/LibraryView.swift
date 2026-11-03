@@ -29,6 +29,7 @@ private struct LibraryContentsView: View {
     @State private var selecting = false
     @State private var selected: Set<UUID> = []
     @State private var review: ReviewRequest?
+    @State private var removalIDs: Set<UUID>?
 
     // The home page acts on the whole library; a folder acts only on its own files.
     private var scopeDocuments: [AudioDocument] {
@@ -130,6 +131,27 @@ private struct LibraryContentsView: View {
             }, onCancel: { picker = nil })
         }
         .sheet(item: $review) { request in ReviewSheet(documentIDs: request.ids) }
+        .confirmationDialog(
+            L10n.text("Remove \(removalIDs?.count ?? 0) selected files?", "移除选中的 \(removalIDs?.count ?? 0) 个文件？"),
+            isPresented: Binding(get: { removalIDs != nil }, set: { if !$0 { removalIDs = nil } }),
+            titleVisibility: .visible,
+            presenting: removalIDs
+        ) { ids in
+            Button(L10n.text("Remove from list", "从列表移除"), role: .destructive) {
+                guard !model.isWorking else { return }
+                model.remove(ids.intersection(scopeIDs))
+                selected = []
+                selecting = false
+            }
+            .disabled(model.isWorking)
+            .accessibilityIdentifier("confirmRemoveButton")
+            Button(L10n.text("Cancel", "取消"), role: .cancel) { }
+        } message: { _ in
+            Text(L10n.text(
+                "These files will be removed from the MusTag list and their unsaved changes discarded. Original audio files and saved backups will be kept.",
+                "这些文件将从 MusTag 列表移除，尚未保存的修改将丢弃。原始音频文件和已保存的备份会保留。"
+            ))
+        }
     }
 
     @ViewBuilder
@@ -237,6 +259,7 @@ private struct LibraryContentsView: View {
             .buttonStyle(.plain)
             .disabled(model.isWorking)
             .accessibilityAddTraits(selected.contains(document.id) ? [.isSelected] : [])
+            .accessibilityIdentifier("audioRow_\(document.fileName)")
         } else {
             NavigationLink(value: document.id) {
                 AudioRow(document: document, candidateCount: model.candidates[document.id]?.count ?? 0)
@@ -254,10 +277,19 @@ private struct LibraryContentsView: View {
     private var batchActions: some View {
         VStack(spacing: 8) {
             if selecting {
-                Text(L10n.text("\(targetIDs.count) selected", "已选 \(targetIDs.count) 个"))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .accessibilityIdentifier("selectedCountLabel")
+                HStack {
+                    Text(L10n.text("\(targetIDs.count) selected", "已选 \(targetIDs.count) 个"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("selectedCountLabel")
+                    Spacer()
+                    Button(role: .destructive) { removalIDs = targetIDs } label: {
+                        Label(L10n.text("Remove from list", "从列表移除"), systemImage: "trash")
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(targetIDs.isEmpty)
+                    .accessibilityIdentifier("batchRemoveButton")
+                }
             }
             HStack(spacing: 12) {
                 Button { model.identify(targetIDs) } label: {

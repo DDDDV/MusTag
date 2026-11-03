@@ -97,6 +97,103 @@ final class MusTagUITests: XCTestCase {
         XCTAssertEqual(selectedCount.label, "4 selected")
     }
 
+    func testBatchRemovalCanBeCancelledThenRemovesAllSelectedLibraryFiles() {
+        launchWithFolders()
+        let musicFolder = app.buttons["folderRow_Music Folder"]
+        XCTAssertTrue(musicFolder.waitForExistence(timeout: 15))
+        let remove = app.buttons["batchRemoveButton"]
+        XCTAssertFalse(remove.exists)
+
+        app.buttons["librarySelectButton"].tap()
+        let selectedCount = app.staticTexts["selectedCountLabel"]
+        XCTAssertEqual(selectedCount.label, "0 selected")
+        XCTAssertTrue(remove.exists)
+        XCTAssertFalse(remove.isEnabled)
+        let selectAll = app.buttons["selectAllButton"]
+        selectAll.tap()
+        XCTAssertEqual(selectedCount.label, "4 selected")
+        XCTAssertTrue(remove.isEnabled)
+        capture("07-batch-removal-selection")
+        remove.tap()
+        let confirm = app.buttons["confirmRemoveButton"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["Remove 4 selected files?"].exists)
+        capture("08-batch-removal-confirmation")
+        app.buttons["Cancel"].tap()
+
+        XCTAssertEqual(selectedCount.label, "4 selected")
+        XCTAssertTrue(app.buttons["audioRow_UI Test.m4a"].exists)
+        selectAll.tap()
+        XCTAssertEqual(selectedCount.label, "0 selected")
+        XCTAssertFalse(remove.isEnabled)
+        selectAll.tap()
+        XCTAssertEqual(selectedCount.label, "4 selected")
+        remove.tap()
+        XCTAssertTrue(confirm.waitForExistence(timeout: 3))
+        confirm.tap()
+
+        XCTAssertFalse(app.buttons["audioRow_UI Test.m4a"].exists)
+        XCTAssertFalse(remove.exists)
+        XCTAssertFalse(selectedCount.exists)
+        XCTAssertTrue(app.buttons["folderRow_Empty Folder"].exists)
+        for name in ["Music Folder", "Other Folder"] {
+            let folder = app.buttons["folderRow_\(name)"]
+            XCTAssertTrue(folder.waitForExistence(timeout: 3))
+            folder.tap()
+            let emptyState = app.descendants(matching: .any).matching(identifier: "folderEmptyState").firstMatch
+            XCTAssertTrue(emptyState.waitForExistence(timeout: 5))
+            XCTAssertFalse(app.buttons["librarySelectButton"].exists)
+            app.navigationBars[name].buttons.element(boundBy: 0).tap()
+        }
+    }
+
+    func testBatchRemovalInFolderOnlyRemovesSelectedFiles() {
+        launchWithFolders()
+        let musicFolder = app.buttons["folderRow_Music Folder"]
+        XCTAssertTrue(musicFolder.waitForExistence(timeout: 15))
+        musicFolder.tap()
+        let firstTrack = app.buttons["audioRow_Folder Track.m4a"]
+        let nestedTrack = app.buttons["audioRow_Nested Track.m4a"]
+        XCTAssertTrue(firstTrack.waitForExistence(timeout: 5))
+        let remove = app.buttons["batchRemoveButton"]
+        XCTAssertFalse(remove.exists)
+        let select = app.buttons["librarySelectButton"]
+        select.tap()
+        XCTAssertFalse(remove.isEnabled)
+        firstTrack.tap()
+        let selectedCount = app.staticTexts["selectedCountLabel"]
+        XCTAssertEqual(selectedCount.label, "1 selected")
+        XCTAssertTrue(remove.isEnabled)
+        remove.tap()
+        let confirm = app.buttons["confirmRemoveButton"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 3))
+        confirm.tap()
+
+        XCTAssertTrue(nestedTrack.waitForExistence(timeout: 3))
+        XCTAssertFalse(firstTrack.exists)
+        XCTAssertEqual(select.label, "Select")
+        XCTAssertFalse(remove.exists)
+        XCTAssertFalse(selectedCount.exists)
+        select.tap()
+        XCTAssertEqual(selectedCount.label, "0 selected")
+        app.buttons["selectAllButton"].tap()
+        XCTAssertEqual(selectedCount.label, "1 selected")
+        remove.tap()
+        XCTAssertTrue(confirm.waitForExistence(timeout: 3))
+        confirm.tap()
+
+        let emptyState = app.descendants(matching: .any).matching(identifier: "folderEmptyState").firstMatch
+        XCTAssertTrue(emptyState.waitForExistence(timeout: 5))
+        XCTAssertFalse(nestedTrack.exists)
+        app.navigationBars["Music Folder"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.buttons["audioRow_UI Test.m4a"].waitForExistence(timeout: 3))
+        XCTAssertTrue(musicFolder.exists)
+        XCTAssertTrue(app.buttons["folderRow_Empty Folder"].exists)
+        app.buttons["folderRow_Other Folder"].tap()
+        XCTAssertTrue(app.buttons["audioRow_Other Track.m4a"].waitForExistence(timeout: 5))
+        XCTAssertFalse(remove.exists)
+    }
+
     func testMissingKeyCanBeConfiguredWithoutNetwork() {
         app.buttons["settingsButton"].tap()
         let status = app.descendants(matching: .any).matching(identifier: "recognitionStatus").firstMatch
