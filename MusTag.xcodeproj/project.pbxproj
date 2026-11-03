@@ -23,6 +23,7 @@
 		0C9869F68358DCD46B37DCFD /* trueaudiofile.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 51E3CDC465FCDCB63F847FCD /* trueaudiofile.cpp */; };
 		0D2982D1AFB216C72D9C1A90 /* NativeAudio.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1669584EDD2F27F9BC173519 /* NativeAudio.swift */; };
 		0DFE67E6EC31D7234622E4F2 /* apefile.cpp in Sources */ = {isa = PBXBuildFile; fileRef = DAA59B5041B8DE7D31CCE423 /* apefile.cpp */; };
+		0F120ACBDAECB350E28ABD09 /* ImageIO.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C3AFEF4885EE408563D14718 /* ImageIO.framework */; };
 		0F2E6E64A2FC4D8AA2E3A273 /* fingerprinter_configuration.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 6692DE6440935E337C7291F5 /* fingerprinter_configuration.cpp */; };
 		0F8C9AF6A89E0718840BF8ED /* ebmlmksegment.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 83F3DB720E7F4B438A630298 /* ebmlmksegment.cpp */; };
 		0F9336E51D6D15EAC6E5A118 /* infotag.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 713731BF770E842AFB9B550C /* infotag.cpp */; };
@@ -116,8 +117,11 @@
 		84E3E73CB6F207A5A0C7C238 /* rifffile.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 12B100957FBEDB99BFC67FD4 /* rifffile.cpp */; };
 		87EFB4B053CE0E3733F90A2D /* dsdifffile.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E3BF2D5B6BC3D4182A86369D /* dsdifffile.cpp */; };
 		88EC3E67AD59033F086F67D6 /* speexproperties.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 683B3B2F068C08DC2CA2044D /* speexproperties.cpp */; };
+		8A80417D5A9AEDFF15A4AA50 /* ArtworkFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACA7ADB6162DCCACA2AFA735 /* ArtworkFlowTests.swift */; };
 		8C08CD8F59E9BA794BF3C105 /* id3v2synchdata.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 72FC0F7767F87CB4B9DEAB3C /* id3v2synchdata.cpp */; };
 		8C80EA53C22B6FA2D1E245DA /* tfile.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 462E861CCE80F764978CD96B /* tfile.cpp */; };
+		8D11E32FE07760A99BBD353D /* CoverArtService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 709F04E888C53C79B6CE88BB /* CoverArtService.swift */; };
+		90189E0BD1E87E985E1C0225 /* CoverArtServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E5A0DBB261EC23B41C9B0B5 /* CoverArtServiceTests.swift */; };
 		910CE456174A18A89F5AE065 /* mpcproperties.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 54CA9D21F0047E403FCE3CD1 /* mpcproperties.cpp */; };
 		919804510A819530C8532BBF /* image_builder.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 149EF7A185CD40886A0932F9 /* image_builder.cpp */; };
 		9365994C3FC0C66F1E5E9080 /* id3v2frame.cpp in Sources */ = {isa = PBXBuildFile; fileRef = F96F1B7F7EA616E09295099E /* id3v2frame.cpp */; };
@@ -171,6 +175,8 @@
 		DBB7F94B2043EFCDC01B4831 /* shortenproperties.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 713105E5545DE9CA81C11B63 /* shortenproperties.cpp */; };
 		DC6D15E5AD6A90963EEFCA13 /* MusicRecognitionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52FCF17EB854482C14D31D07 /* MusicRecognitionService.swift */; };
 		DE03131FB8A0C7BC09608C81 /* fingerprinter.cpp in Sources */ = {isa = PBXBuildFile; fileRef = A322694EED58A89A2AEDAA84 /* fingerprinter.cpp */; };
+		DF2382BDB4423973B4CF40F3 /* ArtworkView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBBD471DC6B72DAC96E8AB70 /* ArtworkView.swift */; };
+		DF9FD25832565875D5C162FD /* CoverArtUITestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = D551D50A36D7582B6F8379A7 /* CoverArtUITestSupport.swift */; };
 		E1856F12DA3B273518ADECE7 /* modproperties.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 4B4C5A3ADBC09B0A19F589FF /* modproperties.cpp */; };
 		E33A79D5C0D977D8B15309C8 /* ebmlmkattachments.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 631406C22A6C315D79D39E2C /* ebmlmkattachments.cpp */; };
 		E42805FE005B783CE55F5851 /* MusicRecognitionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4004D5F6EF721D62A5F28880 /* MusicRecognitionTests.swift */; };
@@ -241,6 +247,7 @@
 		09875760E2453A79350D7380 /* mp4item.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = mp4item.cpp; sourceTree = "<group>"; };
 		0AED8F8F3E85670B7F9EC4CE /* opusfile.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = opusfile.cpp; sourceTree = "<group>"; };
 		0D80FE4FF9623305058810A9 /* ebmlmasterelement.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ebmlmasterelement.cpp; sourceTree = "<group>"; };
+		0E5A0DBB261EC23B41C9B0B5 /* CoverArtServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoverArtServiceTests.swift; sourceTree = "<group>"; };
 		12933F254B0284D8C7093D45 /* unknownframe.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = unknownframe.cpp; sourceTree = "<group>"; };
 		12B100957FBEDB99BFC67FD4 /* rifffile.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = rifffile.cpp; sourceTree = "<group>"; };
 		142562E8F2778EAB20DD3D98 /* matroskasimpletag.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = matroskasimpletag.cpp; sourceTree = "<group>"; };
@@ -328,6 +335,7 @@
 		6E3B1E5E89C0C54E4CF21FE4 /* mp4chapter.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = mp4chapter.cpp; sourceTree = "<group>"; };
 		6EB1947113289D6A17DD6355 /* libz.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libz.tbd; path = usr/lib/libz.tbd; sourceTree = SDKROOT; };
 		6F64D6F459B2C54FEB18C004 /* audioproperties.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = audioproperties.cpp; sourceTree = "<group>"; };
+		709F04E888C53C79B6CE88BB /* CoverArtService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoverArtService.swift; sourceTree = "<group>"; };
 		712BBF2C73FEEF287612770F /* ebmlvoidelement.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ebmlvoidelement.cpp; sourceTree = "<group>"; };
 		713105E5545DE9CA81C11B63 /* shortenproperties.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = shortenproperties.cpp; sourceTree = "<group>"; };
 		713731BF770E842AFB9B550C /* infotag.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = infotag.cpp; sourceTree = "<group>"; };
@@ -375,6 +383,7 @@
 		A97F719622D9FD3F10197D7F /* dsdiffdiintag.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = dsdiffdiintag.cpp; sourceTree = "<group>"; };
 		A9E452440683B88D51A5F13C /* matroskachapter.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = matroskachapter.cpp; sourceTree = "<group>"; };
 		AC12F93E997BB685624B6258 /* ebmlmkcues.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ebmlmkcues.cpp; sourceTree = "<group>"; };
+		ACA7ADB6162DCCACA2AFA735 /* ArtworkFlowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtworkFlowTests.swift; sourceTree = "<group>"; };
 		ADBF4B8366B7C2F346153CFA /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		B08ADF15837EF19DF9F14563 /* dsffile.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = dsffile.cpp; sourceTree = "<group>"; };
 		B194170BA7F478F7FCDA490B /* oggpageheader.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = oggpageheader.cpp; sourceTree = "<group>"; };
@@ -383,11 +392,13 @@
 		BAE335AAD1D773E1E80C4160 /* ebmlelement.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ebmlelement.cpp; sourceTree = "<group>"; };
 		BC06A08D1109A277FBD25119 /* audio_processor.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = audio_processor.cpp; sourceTree = "<group>"; };
 		C0B92ED808E744FCE26E1FE2 /* matroskacues.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = matroskacues.cpp; sourceTree = "<group>"; };
+		C3AFEF4885EE408563D14718 /* ImageIO.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ImageIO.framework; path = System/Library/Frameworks/ImageIO.framework; sourceTree = SDKROOT; };
 		C46185F6ADAE2285B037B6D8 /* tbytevectorstream.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = tbytevectorstream.cpp; sourceTree = "<group>"; };
 		C55278699EA745C71FAFE90C /* asfattribute.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = asfattribute.cpp; sourceTree = "<group>"; };
 		C555F0107DC55686186D5626 /* AudioFileStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioFileStoreTests.swift; sourceTree = "<group>"; };
 		C950580E9D09990179612E21 /* commentsframe.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = commentsframe.cpp; sourceTree = "<group>"; };
 		CACC0AA03ABCC55F6D690F54 /* tpropertymap.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = tpropertymap.cpp; sourceTree = "<group>"; };
+		CBBD471DC6B72DAC96E8AB70 /* ArtworkView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtworkView.swift; sourceTree = "<group>"; };
 		CD0DAC016BC89D9F9364E2A5 /* matroskatag.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = matroskatag.cpp; sourceTree = "<group>"; };
 		CD6612A6F7AEA11AE121E0CD /* tbytevector.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = tbytevector.cpp; sourceTree = "<group>"; };
 		CD8F3E3DA7BF657322716C73 /* asffile.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = asffile.cpp; sourceTree = "<group>"; };
@@ -396,6 +407,7 @@
 		D223F8C6D7C44DFAB7D1AC86 /* ebmlmktags.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ebmlmktags.cpp; sourceTree = "<group>"; };
 		D2C52D7A010D931F68944954 /* matroskasegment.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = matroskasegment.cpp; sourceTree = "<group>"; };
 		D3DFC54EF135CE36B6AB4284 /* mp4qtchapterlist.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = mp4qtchapterlist.cpp; sourceTree = "<group>"; };
+		D551D50A36D7582B6F8379A7 /* CoverArtUITestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoverArtUITestSupport.swift; sourceTree = "<group>"; };
 		D56541D3DA90CB2AEBCE0E36 /* asftag.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = asftag.cpp; sourceTree = "<group>"; };
 		D6D3C2DE7DAD70624AA0F077 /* ebmlmkseekhead.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ebmlmkseekhead.cpp; sourceTree = "<group>"; };
 		D8CFA9A2C2EC476B066C35C1 /* textidentificationframe.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = textidentificationframe.cpp; sourceTree = "<group>"; };
@@ -440,6 +452,7 @@
 				38131681F68C74A95E9628FF /* libChromaprint.a in Frameworks */,
 				F3E6A7042253F2E0BFF94C06 /* Accelerate.framework in Frameworks */,
 				336AAB19DB59A2082D8A7BDF /* AVFoundation.framework in Frameworks */,
+				0F120ACBDAECB350E28ABD09 /* ImageIO.framework in Frameworks */,
 				2C4F9B4A1593A56D8FDF5BD6 /* libz.tbd in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -581,6 +594,7 @@
 		3FD040794E49C4225279558D /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				CBBD471DC6B72DAC96E8AB70 /* ArtworkView.swift */,
 				43893B92F46E3599A78B9789 /* AudioDocumentPicker.swift */,
 				4261E1C02FDC23A6F91D7442 /* LibraryView.swift */,
 				590C3646416160AB4921137E /* ReviewSheet.swift */,
@@ -660,6 +674,7 @@
 			children = (
 				3A4A2E4A8683AF67D524B9C1 /* Accelerate.framework */,
 				1FD5A9D335DC41CF7ADCB701 /* AVFoundation.framework */,
+				C3AFEF4885EE408563D14718 /* ImageIO.framework */,
 				6EB1947113289D6A17DD6355 /* libz.tbd */,
 			);
 			name = Frameworks;
@@ -763,6 +778,8 @@
 			children = (
 				006D7C32194E2B0A83DA9734 /* APIKeyStore.swift */,
 				A9601DDBABD2DF107B95D6FA /* AudioFileStore.swift */,
+				709F04E888C53C79B6CE88BB /* CoverArtService.swift */,
+				D551D50A36D7582B6F8379A7 /* CoverArtUITestSupport.swift */,
 				52FCF17EB854482C14D31D07 /* MusicRecognitionService.swift */,
 				1669584EDD2F27F9BC173519 /* NativeAudio.swift */,
 				F2FCB4BB1F1B457FAFC1B9B9 /* NativeMetadataCodec.swift */,
@@ -983,7 +1000,9 @@
 		F898633D19345F16956424A2 /* Tests */ = {
 			isa = PBXGroup;
 			children = (
+				ACA7ADB6162DCCACA2AFA735 /* ArtworkFlowTests.swift */,
 				C555F0107DC55686186D5626 /* AudioFileStoreTests.swift */,
+				0E5A0DBB261EC23B41C9B0B5 /* CoverArtServiceTests.swift */,
 				611076F922DC87F6F4D79C69 /* Fixtures */,
 				4004D5F6EF721D62A5F28880 /* MusicRecognitionTests.swift */,
 				72097A2B45740AF7A85AAB7B /* NativeAudioTests.swift */,
@@ -1197,8 +1216,11 @@
 			files = (
 				25DB6335FCF16A907DC74CB7 /* APIKeyStore.swift in Sources */,
 				342AA42A655BD1C389A0B1F2 /* AppModel.swift in Sources */,
+				DF2382BDB4423973B4CF40F3 /* ArtworkView.swift in Sources */,
 				EBC2B80E6D8D5B929886A8D0 /* AudioDocumentPicker.swift in Sources */,
 				69AFBE37EB4A274B520B182A /* AudioFileStore.swift in Sources */,
+				8D11E32FE07760A99BBD353D /* CoverArtService.swift in Sources */,
+				DF9FD25832565875D5C162FD /* CoverArtUITestSupport.swift in Sources */,
 				7E157D4874CEAAC06DD7AC0A /* LibraryView.swift in Sources */,
 				34738233A784488D3A34F6C5 /* MTTagBridge.mm in Sources */,
 				347A1E77F7DF1C1D03C66263 /* Models.swift in Sources */,
@@ -1396,7 +1418,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				8A80417D5A9AEDFF15A4AA50 /* ArtworkFlowTests.swift in Sources */,
 				EAB69EBD857E0943301D76C5 /* AudioFileStoreTests.swift in Sources */,
+				90189E0BD1E87E985E1C0225 /* CoverArtServiceTests.swift in Sources */,
 				E42805FE005B783CE55F5851 /* MusicRecognitionTests.swift in Sources */,
 				F7369280A063F1715E86E7BB /* NativeAudioTests.swift in Sources */,
 			);

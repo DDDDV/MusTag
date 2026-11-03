@@ -100,6 +100,53 @@ final class MusTagUITests: XCTestCase {
         XCTAssertTrue(app.secureTextFields["apiKeyField"].exists)
     }
 
+    func testSelectedReleaseCoverRequiresReviewThenSavesAndRestores() {
+        app.terminate()
+        app.launchArguments += ["--ui-testing-with-audio", "--ui-testing-with-cover"]
+        app.launch()
+        let audio = app.buttons["audioRow_UI Test.m4a"]
+        XCTAssertTrue(audio.waitForExistence(timeout: 10))
+        audio.tap()
+        let candidate = app.buttons["metadataCandidate_ui-cover-release"]
+        for _ in 0..<6 where !candidate.isHittable { app.swipeUp() }
+        XCTAssertTrue(candidate.isHittable)
+        candidate.tap()
+        let review = app.buttons["trackReviewButton"]
+        expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: review)
+        waitForExpectations(timeout: 10)
+        review.tap()
+        let newCover = app.buttons["draftArtworkPreview"]
+        XCTAssertTrue(newCover.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["No original cover"].exists)
+        capture("04-cover-review")
+        newCover.tap()
+        let done = app.buttons["artworkPreviewDoneButton"]
+        XCTAssertTrue(done.waitForExistence(timeout: 3))
+        done.tap()
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(review.waitForExistence(timeout: 3))
+        XCTAssertTrue(review.isEnabled, "Cancelling review must leave a pending draft")
+        review.tap()
+        app.buttons["confirmSaveButton"].tap()
+        expectation(for: NSPredicate(format: "exists == true AND enabled == false"), evaluatedWith: review)
+        waitForExpectations(timeout: 15)
+        app.navigationBars["Edit tags"].buttons.element(boundBy: 0).tap()
+        app.buttons["settingsButton"].tap()
+        app.buttons["backupHistoryButton"].tap()
+        let restore = app.buttons["Restore original"].firstMatch
+        XCTAssertTrue(restore.waitForExistence(timeout: 3))
+        restore.tap()
+        app.buttons["confirmRestoreButton"].tap()
+        XCTAssertTrue(app.staticTexts["Restored"].waitForExistence(timeout: 15))
+        app.navigationBars["Undo changes"].buttons.element(boundBy: 0).tap()
+        app.buttons["settingsDoneButton"].tap()
+        audio.tap()
+        let noCover = app.staticTexts["No embedded cover"]
+        for _ in 0..<5 where !noCover.isHittable { app.swipeUp() }
+        XCTAssertTrue(noCover.exists)
+        XCTAssertFalse(review.isEnabled)
+    }
+
     private func launchWithAudio() {
         app.terminate()
         app.launchArguments.append("--ui-testing-with-audio")

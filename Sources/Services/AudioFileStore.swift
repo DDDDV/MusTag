@@ -116,6 +116,7 @@ actor AudioFileStore {
 
         try ensureAvailableSpace(for: staged)
         let originalPayload = try payloadHasher(staged)
+        let originalArtwork = try codec.read(from: staged).artwork
         let backupID = UUID()
         let backupURL = backupDirectory.appendingPathComponent(backupID.uuidString)
             .appendingPathExtension(source.pathExtension)
@@ -128,7 +129,15 @@ actor AudioFileStore {
         }
 
         try Task.checkCancellation()
-        try codec.write(document.draft, to: staged)
+        if document.original != document.draft {
+            try codec.write(document.draft, to: staged)
+        }
+        if document.hasArtworkChanges {
+            guard let artwork = document.draftArtwork else {
+                throw message("Choose a cover before saving.", "请先选择要保存的封面。")
+            }
+            try codec.writeArtwork(artwork, to: staged)
+        }
         let verified = try codec.read(from: staged)
         guard tagsEquivalent(verified.tags, document.draft) else {
             throw message("This file format did not preserve the requested tags. The original was not changed.",
@@ -137,6 +146,11 @@ actor AudioFileStore {
         guard try payloadHasher(staged) == originalPayload else {
             throw message("Audio verification failed. The original was not changed.",
                           "音频数据校验失败，原文件未修改。")
+        }
+        let expectedArtwork = document.hasArtworkChanges ? document.draftArtwork : originalArtwork
+        guard verified.artwork == expectedArtwork else {
+            throw message("Cover art verification failed. The original was not changed.",
+                          "封面校验失败，原文件未修改。")
         }
         let writtenHash = try Self.fileHash(staged)
         var backup = BackupRecord(
@@ -175,6 +189,9 @@ actor AudioFileStore {
         updated.bookmark = backup.bookmark
         updated.original = verified.tags
         updated.draft = verified.tags
+        updated.originalArtwork = verified.artwork
+        updated.draftArtwork = verified.artwork
+        updated.artworkVersion = 1
         updated.duration = verified.duration
         updated.sourceHash = writtenHash
         updated.error = postSaveWarning
@@ -233,7 +250,8 @@ actor AudioFileStore {
             id: backup.documentID, url: source,
             bookmark: restoredBookmark,
             original: snapshot.tags, draft: snapshot.tags, duration: snapshot.duration,
-            error: nil, sourceHash: backup.originalHash
+            error: nil, sourceHash: backup.originalHash,
+            originalArtwork: snapshot.artwork, draftArtwork: snapshot.artwork
         )
         do { try updatePersistedDocument(document) } catch {
             document.error = L10n.text(
@@ -255,6 +273,18 @@ actor AudioFileStore {
                 defer { if accessing { url.stopAccessingSecurityScopedResource() } }
                 documents[index].url = url
                 documents[index].bookmark = try refreshedBookmark(url, fallback: documents[index].bookmark)
+                if documents[index].artworkVersion == nil {
+                    let workspace = try makeWorkspace()
+                    defer { try? manager.removeItem(at: workspace) }
+                    let staged = workspace.appendingPathComponent("artwork").appendingPathExtension(url.pathExtension)
+                    try coordinatedCopy(from: url, to: staged)
+                    guard try Self.fileHash(staged) == documents[index].sourceHash else { throw sourceChanged() }
+                    let artwork = try codec.read(from: staged).artwork
+                    let hasPendingArtwork = documents[index].hasArtworkChanges
+                    documents[index].originalArtwork = artwork
+                    if !hasPendingArtwork { documents[index].draftArtwork = artwork }
+                    documents[index].artworkVersion = 1
+                }
             } catch {
                 documents[index].error = L10n.text(
                     "Reconnect the drive and select this file again.", "请重新连接存储位置并再次选择此文件。"
@@ -282,7 +312,8 @@ actor AudioFileStore {
         documents.append(AudioDocument(
             url: source, bookmark: try refreshedBookmark(source, fallback: nil),
             original: snapshot.tags, draft: snapshot.tags, duration: snapshot.duration,
-            error: nil, sourceHash: hash
+            error: nil, sourceHash: hash,
+            originalArtwork: snapshot.artwork, draftArtwork: snapshot.artwork
         ))
     }
 

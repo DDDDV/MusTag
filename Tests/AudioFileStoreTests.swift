@@ -27,6 +27,95 @@ final class AudioFileStoreTests: XCTestCase {
         XCTAssertFalse(result.documents[0].sourceHash.isEmpty)
     }
 
+    func testCoverOnlyDraftPersistsSavesAndRestores() async throws {
+        let song = try fixture()
+        let original = AudioArtwork(data: Data("original cover".utf8), mimeType: "image/png")
+        let replacement = AudioArtwork(data: Data("new cover".utf8), mimeType: "image/jpeg")
+        try FixtureCodec().writeArtwork(original, to: song)
+        let bytes = try Data(contentsOf: song)
+        let store = makeStore()
+        var document = try await firstDocument(song, store: store)
+        XCTAssertEqual(document.originalArtwork, original)
+        document.draftArtwork = replacement
+        XCTAssertTrue(document.hasChanges)
+        try await store.persistDocuments([document])
+        let loaded = try await makeStore().loadDocuments()
+        XCTAssertEqual(loaded[0].draftArtwork, replacement)
+        XCTAssertEqual(try Data(contentsOf: song), bytes, "A persisted draft must not write the audio file")
+        let (saved, backup) = try await store.save(loaded[0])
+        XCTAssertFalse(saved.hasChanges)
+        XCTAssertEqual(saved.originalArtwork, replacement)
+        XCTAssertEqual(try FixtureCodec().read(from: song).artwork, replacement)
+        XCTAssertEqual(try Data(contentsOf: backup.backupURL), bytes)
+        let restored = try await store.restore(backup)
+        XCTAssertEqual(restored.draftArtwork, original)
+        XCTAssertFalse(restored.hasChanges)
+        XCTAssertEqual(try Data(contentsOf: song), bytes)
+    }
+
+    func testFailedCoverVerificationLeavesOriginalAndJournalUntouched() async throws {
+        let song = try fixture()
+        let bytes = try Data(contentsOf: song)
+        let store = makeStore(codec: FixtureCodec(ignoreArtwork: true))
+        var document = try await firstDocument(song, store: store)
+        document.draftArtwork = AudioArtwork(data: Data("cover".utf8), mimeType: "image/png")
+        do {
+            _ = try await store.save(document)
+            XCTFail("A writer dropping the requested cover must be rejected")
+        } catch { }
+        XCTAssertEqual(try Data(contentsOf: song), bytes)
+        let backups = try await store.backups()
+        XCTAssertTrue(backups.isEmpty)
+    }
+
+    func testTextEditCannotSilentlyDropExistingCover() async throws {
+        let song = try fixture()
+        try FixtureCodec().writeArtwork(AudioArtwork(data: Data("cover".utf8), mimeType: "image/png"), to: song)
+        let bytes = try Data(contentsOf: song)
+        let store = makeStore(codec: FixtureCodec(dropArtworkOnTagWrite: true))
+        var document = try await firstDocument(song, store: store)
+        document.draft.title = "New title"
+        do {
+            _ = try await store.save(document)
+            XCTFail("Text edits must preserve existing cover data")
+        } catch { }
+        XCTAssertEqual(try Data(contentsOf: song), bytes)
+    }
+
+    func testLegacyLibraryLoadsEmbeddedArtworkWithoutLosingTextDraft() async throws {
+        let song = try fixture()
+        let artwork = AudioArtwork(data: Data("cover".utf8), mimeType: "image/png")
+        try FixtureCodec().writeArtwork(artwork, to: song)
+        let store = makeStore()
+        var document = try await firstDocument(song, store: store)
+        document.draft.title = "Pending text"
+        document.originalArtwork = nil
+        document.draftArtwork = nil
+        document.artworkVersion = nil
+        try await store.persistDocuments([document])
+        let loaded = try await makeStore().loadDocuments()
+        XCTAssertEqual(loaded[0].originalArtwork, artwork)
+        XCTAssertEqual(loaded[0].draftArtwork, artwork)
+        XCTAssertEqual(loaded[0].draft.title, "Pending text")
+        XCTAssertFalse(loaded[0].hasArtworkChanges)
+    }
+
+    func testDelayedLegacyMigrationKeepsDownloadedCoverDraft() async throws {
+        let song = try fixture()
+        let original = AudioArtwork(data: Data("original".utf8), mimeType: "image/png")
+        let downloaded = AudioArtwork(data: Data("downloaded".utf8), mimeType: "image/jpeg")
+        try FixtureCodec().writeArtwork(original, to: song)
+        let store = makeStore()
+        var document = try await firstDocument(song, store: store)
+        document.originalArtwork = nil
+        document.draftArtwork = downloaded
+        document.artworkVersion = nil
+        try await store.persistDocuments([document])
+        let loaded = try await makeStore().loadDocuments()
+        XCTAssertEqual(loaded[0].originalArtwork, original)
+        XCTAssertEqual(loaded[0].draftArtwork, downloaded)
+    }
+
     func testSavePreservesAudioAndBackupThenUndoRestoresExactOriginal() async throws {
         let song = try fixture()
         let originalBytes = try Data(contentsOf: song)
@@ -241,23 +330,33 @@ final class AudioFileStoreTests: XCTestCase {
 private struct FixtureAudio: Codable {
     var tags: AudioTags
     var payload: String
+    var artwork: AudioArtwork? = nil
 }
 
 private struct FixtureCodec: AudioMetadataCodec {
     var corruptAudio = false
     var ignoreTags = false
     var cancelOnRead = false
+    var ignoreArtwork = false
+    var dropArtworkOnTagWrite = false
 
     func read(from url: URL) throws -> AudioSnapshot {
         let file = try JSONDecoder().decode(FixtureAudio.self, from: Data(contentsOf: url))
         if cancelOnRead { withUnsafeCurrentTask { $0?.cancel() } }
-        return AudioSnapshot(tags: file.tags, duration: 180)
+        return AudioSnapshot(tags: file.tags, duration: 180, artwork: file.artwork)
     }
 
     func write(_ tags: AudioTags, to url: URL) throws {
         var file = try JSONDecoder().decode(FixtureAudio.self, from: Data(contentsOf: url))
         if !ignoreTags { file.tags = tags }
         if corruptAudio { file.payload = "corrupted audio" }
+        if dropArtworkOnTagWrite { file.artwork = nil }
+        try JSONEncoder().encode(file).write(to: url, options: .atomic)
+    }
+
+    func writeArtwork(_ artwork: AudioArtwork, to url: URL) throws {
+        var file = try JSONDecoder().decode(FixtureAudio.self, from: Data(contentsOf: url))
+        if !ignoreArtwork { file.artwork = artwork }
         try JSONEncoder().encode(file).write(to: url, options: .atomic)
     }
 

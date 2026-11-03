@@ -4,6 +4,7 @@ outputs/*
 !outputs/01-library-ios18.png
 !outputs/02-editor-ios18.png
 !outputs/03-review-ios18.png
+!outputs/04-cover-review-ios18.png
 !outputs/VALIDATION.md
 DerivedData/
 *.xcuserstate

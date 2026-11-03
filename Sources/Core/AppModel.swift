@@ -18,7 +18,8 @@ final class AppModel: ObservableObject {
     @Published var showsSettings = false
 
     private let fileStore: AudioFileStore
-    private let recognition = MusicRecognitionService()
+    private let recognition: MusicRecognitionService
+    private let coverArt: CoverArtService
     private var operationTask: Task<Void, Never>?
     private var persistenceTask: Task<Void, Never>?
     private var loaded = false
@@ -33,14 +34,32 @@ final class AppModel: ObservableObject {
         #endif
     }
 
-    init() {
-        if Self.isUITesting {
+    init(fileStore: AudioFileStore? = nil,
+         recognition: MusicRecognitionService = MusicRecognitionService(),
+         coverArt: CoverArtService = CoverArtService()) {
+        #if DEBUG
+        if Self.isUITesting && ProcessInfo.processInfo.arguments.contains("--ui-testing-with-cover") {
+            let session = CoverArtUITestSupport.session()
+            self.recognition = MusicRecognitionService(session: session, minimumMusicBrainzInterval: 0)
+            self.coverArt = CoverArtService(session: session)
+        } else {
+            self.recognition = recognition
+            self.coverArt = coverArt
+        }
+        #else
+        self.recognition = recognition
+        self.coverArt = coverArt
+        #endif
+        if let fileStore {
+            self.fileStore = fileStore
+            uiTestDirectory = nil
+        } else if Self.isUITesting {
             let directory = FileManager.default.temporaryDirectory.appendingPathComponent("MusTagUITests-\(UUID().uuidString)", isDirectory: true)
-            fileStore = AudioFileStore(codec: NativeMetadataCodec(), storageDirectory: directory)
+            self.fileStore = AudioFileStore(codec: NativeMetadataCodec(), storageDirectory: directory)
             uiTestDirectory = directory
             apiKey = ""
         } else {
-            fileStore = AudioFileStore(codec: NativeMetadataCodec())
+            self.fileStore = AudioFileStore(codec: NativeMetadataCodec())
             uiTestDirectory = nil
         }
     }
@@ -62,6 +81,9 @@ final class AppModel: ObservableObject {
                 let result = try await fileStore.importFiles(from: [fixture])
                 documents = result.documents
                 if !result.failures.isEmpty { throw MusTagError.message(result.failures.joined(separator: "\n")) }
+                if ProcessInfo.processInfo.arguments.contains("--ui-testing-with-cover"), let document = documents.first {
+                    candidates[document.id] = [CoverArtUITestSupport.candidate(tags: document.original)]
+                }
             }
             #endif
             canPersist = true
@@ -93,10 +115,37 @@ final class AppModel: ObservableObject {
                     let proposed = field.value(in: resolved.tags)
                     if !proposed.isEmpty { field.set(proposed, in: &tags) }
                 }
+                // A newly selected release must never retain another release's pending cover.
+                var artwork = document.originalArtwork
+                var coverNotice: String?
+                if let releaseID = resolved.releaseID {
+                    operation = L10n.text("Downloading cover", "正在下载封面")
+                    do {
+                        if let downloaded = try await coverArt.frontCover(releaseID: releaseID) {
+                            artwork = downloaded
+                        } else {
+                            coverNotice = L10n.text(
+                                "This release has no front cover. Tags were added to the draft; the original cover was kept.",
+                                "此发行版本暂无正面封面。文字标签已填入草稿，原封面保持不变。")
+                        }
+                    } catch is CancellationError { throw CancellationError() }
+                    catch {
+                        try Task.checkCancellation()
+                        coverNotice = L10n.text(
+                            "Cover download failed. Tags were added to the draft; the original cover was kept. Select the release again to retry.\n",
+                            "封面下载失败。文字标签已填入草稿，原封面保持不变。可再次选择此版本重试。\n") + error.localizedDescription
+                    }
+                } else {
+                    coverNotice = L10n.text("This match has no release to look up a cover. The original cover was kept.",
+                                            "此匹配没有可用于查找封面的发行版本，原封面保持不变。")
+                }
+                try Task.checkCancellation()
                 if let index = documents.firstIndex(where: { $0.id == id }) {
                     documents[index].draft = tags
+                    documents[index].draftArtwork = artwork
                     documents[index].error = nil
                 }
+                notice = coverNotice
                 completedCount = 1
                 await persistNow()
             } catch is CancellationError { }
@@ -105,8 +154,17 @@ final class AppModel: ObservableObject {
     }
 
     func discardChanges(for id: UUID) {
-        guard let document = document(id) else { return }
-        updateDraft(document.original, for: id)
+        guard !isWorking, let index = documents.firstIndex(where: { $0.id == id }) else { return }
+        documents[index].draft = documents[index].original
+        documents[index].draftArtwork = documents[index].originalArtwork
+        documents[index].error = nil
+        schedulePersistence()
+    }
+
+    func resetArtwork(for id: UUID) {
+        guard !isWorking, let index = documents.firstIndex(where: { $0.id == id }) else { return }
+        documents[index].draftArtwork = documents[index].originalArtwork
+        schedulePersistence()
     }
 
     func remove(_ ids: Set<UUID>) {
@@ -141,6 +199,7 @@ final class AppModel: ObservableObject {
                                 field.set(field.value(in: existing.draft), in: &draft)
                             }
                             refreshed.draft = draft
+                            if existing.hasArtworkChanges { refreshed.draftArtwork = existing.draftArtwork }
                             refreshedDrafts += 1
                         }
                         documents[index] = refreshed

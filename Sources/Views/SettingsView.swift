@@ -144,6 +144,7 @@ private struct LicenseView: View {
             Section {
                 Link("AcoustID", destination: URL(string: "https://acoustid.org/")!)
                 Link("MusicBrainz", destination: URL(string: "https://musicbrainz.org/")!)
+                Link("Cover Art Archive", destination: URL(string: "https://coverartarchive.org/")!)
             } header: { Text(L10n.text("Metadata services", "元数据服务")) }
         }
         .navigationTitle(L10n.text("Acknowledgements", "致谢"))

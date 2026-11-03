@@ -172,11 +172,9 @@ private struct AudioRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: "music.note")
-                .font(.title3)
-                .foregroundStyle(.indigo)
-                .frame(width: 40, height: 44)
-                .background(.indigo.opacity(0.08), in: RoundedRectangle(cornerRadius: 9))
+            ArtworkImage(artwork: document.draftArtwork, maximumPixelSize: 144)
+                .frame(width: 44, height: 44)
+                .clipShape(RoundedRectangle(cornerRadius: 7))
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 4) {
                 Text(document.draft.title.isEmpty ? document.fileName : document.draft.title)

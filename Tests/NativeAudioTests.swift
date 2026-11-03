@@ -1,8 +1,121 @@
 import AVFoundation
+import UIKit
 import XCTest
 @testable import MusTag
 
 final class NativeAudioTests: XCTestCase {
+    func testCoverRoundTripAndReplacementPreserveTagsAndAudioInEveryFormat() throws {
+        let first = try artwork(color: .red, jpeg: false)
+        let replacement = try artwork(color: .blue, jpeg: true)
+        for ext in ["mp3", "flac", "m4a"] {
+            let copy = try audioCopy(ext)
+            defer { try? FileManager.default.removeItem(at: copy) }
+            let codec = NativeMetadataCodec()
+            let before = try NativeAudio.payloadHash(url: copy)
+            let originalTags = try codec.read(from: copy).tags
+            try codec.writeArtwork(first, to: copy)
+            XCTAssertEqual(try codec.read(from: copy).artwork, first, ext)
+            XCTAssertEqual(try codec.read(from: copy).tags, originalTags, ext)
+            XCTAssertEqual(try NativeAudio.payloadHash(url: copy), before, ext)
+
+            var tags = originalTags
+            tags.title = "Cover preserved during text edit"
+            try codec.write(tags, to: copy)
+            XCTAssertEqual(try codec.read(from: copy).artwork, first, ext)
+
+            try codec.writeArtwork(replacement, to: copy)
+            XCTAssertEqual(try codec.read(from: copy).artwork, replacement, ext)
+            XCTAssertEqual(try codec.read(from: copy).tags, tags, ext)
+            XCTAssertEqual(try NativeAudio.payloadHash(url: copy), before, ext)
+            XCTAssertNil(try Data(contentsOf: copy).range(of: first.data), "Old front cover must be replaced, not accumulated: \(ext)")
+        }
+    }
+
+    func testInvalidCoverCannotChangeAudioFile() throws {
+        let valid = try artwork(color: .red, jpeg: false)
+        let invalid = [
+            AudioArtwork(data: Data("not an image".utf8), mimeType: "image/png"),
+            AudioArtwork(data: valid.data, mimeType: "image/jpeg"),
+            AudioArtwork(data: Data(repeating: 0, count: 8 * 1024 * 1024 + 1), mimeType: "image/png")
+        ]
+        for ext in ["mp3", "flac", "m4a"] {
+            let copy = try audioCopy(ext)
+            defer { try? FileManager.default.removeItem(at: copy) }
+            let before = try Data(contentsOf: copy)
+            for image in invalid {
+                XCTAssertThrowsError(try NativeMetadataCodec().writeArtwork(image, to: copy), ext)
+                XCTAssertEqual(try Data(contentsOf: copy), before, ext)
+            }
+        }
+    }
+
+    func testCoverOnlySaveBacksUpAndRestoresExactOriginalBytesInEveryFormat() async throws {
+        let originalArtwork = try artwork(color: .red, jpeg: false)
+        let replacement = try artwork(color: .blue, jpeg: true)
+        for ext in ["mp3", "flac", "m4a"] {
+            let copy = try audioCopy(ext)
+            let state = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            defer {
+                try? FileManager.default.removeItem(at: copy)
+                try? FileManager.default.removeItem(at: state)
+            }
+            let codec = NativeMetadataCodec()
+            try codec.writeArtwork(originalArtwork, to: copy)
+            let originalBytes = try Data(contentsOf: copy)
+            let payload = try NativeAudio.payloadHash(url: copy)
+            let store = AudioFileStore(codec: codec, storageDirectory: state)
+            let imported = try await store.importFiles(from: [copy])
+            var document = try XCTUnwrap(imported.documents.first, imported.failures.joined(separator: "; "))
+            XCTAssertEqual(document.originalArtwork, originalArtwork, ext)
+            document.draftArtwork = replacement
+            XCTAssertTrue(document.hasChanges, ext)
+            let (saved, backup) = try await store.save(document)
+            XCTAssertFalse(saved.hasChanges, ext)
+            XCTAssertEqual(saved.originalArtwork, replacement, ext)
+            XCTAssertEqual(try codec.read(from: copy).artwork, replacement, ext)
+            XCTAssertEqual(try NativeAudio.payloadHash(url: copy), payload, ext)
+            XCTAssertEqual(try Data(contentsOf: backup.backupURL), originalBytes, ext)
+            let restored = try await store.restore(backup)
+            XCTAssertEqual(restored.originalArtwork, originalArtwork, ext)
+            XCTAssertEqual(restored.draftArtwork, originalArtwork, ext)
+            XCTAssertFalse(restored.hasChanges, ext)
+            XCTAssertEqual(try Data(contentsOf: copy), originalBytes, ext)
+        }
+    }
+
+    func testMP3CoverReplacementPreservesBackCoverAndPrefersFront() throws {
+        let copy = try audioCopy("mp3")
+        defer { try? FileManager.default.removeItem(at: copy) }
+        var audio = try Data(contentsOf: copy)
+        if audio.starts(with: Data("ID3".utf8)), audio.count >= 10 {
+            let tagSize = audio[6..<10].reduce(0) { ($0 << 7) | Int($1) }
+            audio.removeFirst(10 + tagSize + (audio[5] & 0x10 != 0 ? 10 : 0))
+        }
+        let back = try artwork(color: .green, jpeg: false)
+        var body = Data([0]) // ISO-8859-1 encoding, MIME, back-cover type, empty description.
+        body.append(Data("image/png".utf8))
+        body.append(contentsOf: [0, 4, 0])
+        body.append(back.data)
+        var frame = Data("APIC".utf8)
+        frame.append(syncSafe(body.count))
+        frame.append(contentsOf: [0, 0])
+        frame.append(body)
+        var file = Data([73, 68, 51, 4, 0, 0])
+        file.append(syncSafe(frame.count))
+        file.append(frame)
+        file.append(audio)
+        try file.write(to: copy)
+        let codec = NativeMetadataCodec()
+        XCTAssertEqual(try codec.read(from: copy).artwork, back)
+        let before = try NativeAudio.payloadHash(url: copy)
+        for front in [try artwork(color: .red, jpeg: false), try artwork(color: .blue, jpeg: true)] {
+            try codec.writeArtwork(front, to: copy)
+            XCTAssertEqual(try codec.read(from: copy).artwork, front)
+            XCTAssertNotNil(try Data(contentsOf: copy).range(of: back.data))
+            XCTAssertEqual(try NativeAudio.payloadHash(url: copy), before)
+        }
+    }
+
     func testTagEditingPreservesEncodedAudioInEverySupportedFormat() throws {
         for ext in ["mp3", "flac", "m4a"] {
             let source = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "sample", withExtension: ext, subdirectory: "Fixtures"))
@@ -60,6 +173,7 @@ final class NativeAudioTests: XCTestCase {
             tags.title = "Preserve other fields"
             if discard != 0 {
                 XCTAssertThrowsError(try codec.write(tags, to: url))
+                XCTAssertThrowsError(try codec.writeArtwork(artwork(color: .red, jpeg: false), to: url))
                 XCTAssertEqual(try Data(contentsOf: url), fixture)
             } else {
                 let before = try NativeAudio.payloadHash(url: url)
@@ -90,5 +204,28 @@ final class NativeAudioTests: XCTestCase {
         XCTAssertGreaterThan(first.fingerprint.count, 20)
         XCTAssertEqual(first.fingerprint, second.fingerprint)
         XCTAssertEqual(first.duration, 20, accuracy: 0.01)
+    }
+
+    private func audioCopy(_ ext: String) throws -> URL {
+        let source = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "sample", withExtension: ext, subdirectory: "Fixtures"))
+        let copy = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + "." + ext)
+        try FileManager.default.copyItem(at: source, to: copy)
+        return copy
+    }
+
+    private func artwork(color: UIColor, jpeg: Bool) throws -> AudioArtwork {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 16, height: 12), format: format).image { context in
+            color.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 16, height: 12))
+        }
+        return AudioArtwork(data: try XCTUnwrap(jpeg ? image.jpegData(compressionQuality: 0.9) : image.pngData()),
+                            mimeType: jpeg ? "image/jpeg" : "image/png")
+    }
+
+    private func syncSafe(_ value: Int) -> Data {
+        Data([UInt8((value >> 21) & 0x7f), UInt8((value >> 14) & 0x7f),
+              UInt8((value >> 7) & 0x7f), UInt8(value & 0x7f)])
     }
 }

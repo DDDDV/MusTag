@@ -17,9 +17,15 @@ struct AudioTags: Codable, Equatable, Sendable {
     }
 }
 
+struct AudioArtwork: Codable, Equatable, Sendable {
+    var data: Data
+    var mimeType: String
+}
+
 struct AudioSnapshot: Sendable {
     var tags: AudioTags
     var duration: Double
+    var artwork: AudioArtwork? = nil
 }
 
 struct AudioDocument: Identifiable, Codable, Sendable {
@@ -31,8 +37,13 @@ struct AudioDocument: Identifiable, Codable, Sendable {
     var duration: Double
     var error: String?
     var sourceHash: String = ""
+    var originalArtwork: AudioArtwork? = nil
+    var draftArtwork: AudioArtwork? = nil
+    // Missing on pre-artwork library entries; populated on their first refresh.
+    var artworkVersion: Int? = 1
     var fileName: String { url.lastPathComponent }
-    var hasChanges: Bool { original != draft }
+    var hasArtworkChanges: Bool { originalArtwork != draftArtwork }
+    var hasChanges: Bool { original != draft || hasArtworkChanges }
 }
 
 struct MetadataCandidate: Identifiable, Sendable {
@@ -65,6 +76,13 @@ struct ImportResult: Sendable {
 protocol AudioMetadataCodec: Sendable {
     func read(from url: URL) throws -> AudioSnapshot
     func write(_ tags: AudioTags, to url: URL) throws
+    func writeArtwork(_ artwork: AudioArtwork, to url: URL) throws
+}
+
+extension AudioMetadataCodec {
+    func writeArtwork(_ artwork: AudioArtwork, to url: URL) throws {
+        throw MusTagError.message(L10n.text("This format cannot save cover art.", "此格式无法保存封面。"))
+    }
 }
 
 enum MusTagError: LocalizedError {

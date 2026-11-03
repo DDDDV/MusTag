@@ -41,6 +41,37 @@ struct TrackEditorView: View {
                         Text(L10n.text("Changes stay in the draft until you review and save.", "修改先保存在草稿中，预览确认后才会写入文件。"))
                     }
 
+                    Section {
+                        VStack(alignment: .leading, spacing: 12) {
+                            ArtworkPreviewButton(artwork: document.draftArtwork)
+                                .accessibilityIdentifier("artworkPreviewButton")
+                            if document.hasArtworkChanges {
+                                Label(L10n.text("New cover · not saved", "新封面 · 尚未保存"), systemImage: "arrow.down.circle")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.indigo)
+                                Button {
+                                    model.resetArtwork(for: documentID)
+                                } label: {
+                                    Text(document.originalArtwork == nil
+                                         ? L10n.text("Discard cover change", "撤销封面修改")
+                                         : L10n.text("Keep original cover", "保留原封面"))
+                                }
+                                .accessibilityIdentifier("resetArtworkButton")
+                            } else {
+                                Text(document.draftArtwork == nil
+                                     ? L10n.text("No embedded cover", "文件暂无内嵌封面")
+                                     : L10n.text("Current cover", "当前封面"))
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    } header: {
+                        Text(L10n.text("Cover", "封面"))
+                    } footer: {
+                        Text(L10n.text("Choose a matching release to download its front cover. Tap the image to preview it; it is written only when you review and save.", "选择匹配的发行版本后下载对应正面封面。点击图片可放大预览，确认保存后才会写入文件。"))
+                    }
+
                     if let error = document.error {
                         Section {
                             Label(error, systemImage: "exclamationmark.circle")
@@ -55,12 +86,13 @@ struct TrackEditorView: View {
                                 Button { model.useCandidate(candidate, for: documentID) } label: {
                                     MetadataCandidateRow(candidate: candidate)
                                 }
+                                .accessibilityIdentifier("metadataCandidate_\(candidate.id)")
                                 .disabled(model.isWorking)
                             }
                         } header: {
                             Text(L10n.text("Choose a match", "选择匹配版本"))
                         } footer: {
-                            Text(L10n.text("MusicBrainz · Select your release to fill the draft. Empty fields keep your existing values.", "MusicBrainz · 选择对应发行版本以填入草稿。空缺字段会保留现有内容。"))
+                            Text(L10n.text("Choose a release to fill the draft and download its cover from Cover Art Archive. Missing fields and unavailable covers keep your original values.", "选择发行版本后填入草稿，并从 Cover Art Archive 下载对应封面。空缺字段和未获取到的封面会保留原有内容。"))
                         }
                     }
                 }

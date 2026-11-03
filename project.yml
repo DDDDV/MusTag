@@ -88,6 +88,7 @@ targets:
       - target: Chromaprint
       - sdk: Accelerate.framework
       - sdk: AVFoundation.framework
+      - sdk: ImageIO.framework
       - sdk: libz.tbd
   MusTagTests:
     type: bundle.unit-test
