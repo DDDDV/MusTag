@@ -11,9 +11,21 @@ final class MusTagUITests: XCTestCase {
     }
 
     func testEmptyLibraryOffersFilesAndFolderImport() {
+        let welcome = app.descendants(matching: .any).matching(identifier: "welcomeScreen").firstMatch
+        XCTAssertTrue(welcome.waitForExistence(timeout: 8))
         let add = app.buttons["addAudioButton"].firstMatch
         XCTAssertTrue(add.waitForExistence(timeout: 8))
         XCTAssertFalse(app.buttons["reviewButton"].exists)
+
+        let faq = app.buttons["welcomeFAQButton"]
+        XCTAssertTrue(faq.exists)
+        faq.tap()
+        XCTAssertTrue(app.navigationBars["Good to know"].waitForExistence(timeout: 3))
+        let faqContent = app.descendants(matching: .any).matching(identifier: "welcomeFAQContent").firstMatch
+        XCTAssertTrue(faqContent.exists)
+        app.buttons["welcomeFAQDoneButton"].tap()
+        XCTAssertTrue(faq.waitForExistence(timeout: 3))
+
         add.tap()
         XCTAssertTrue(app.buttons["chooseFilesButton"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.buttons["chooseFolderButton"].exists)

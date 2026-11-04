@@ -47,6 +47,7 @@ private struct LibraryContentsView: View {
     private var isEmpty: Bool {
         folder == nil ? model.documents.isEmpty && model.folders.isEmpty : scopeDocuments.isEmpty
     }
+    private var showsWelcome: Bool { folder == nil && isEmpty }
 
     var body: some View {
         Group {
@@ -90,10 +91,22 @@ private struct LibraryContentsView: View {
                 .listStyle(.insetGrouped)
             }
         }
-        .navigationTitle(folder?.name ?? "MusTag")
+        .navigationTitle(showsWelcome ? "" : folder?.name ?? "MusTag")
+        .navigationBarTitleDisplayMode(showsWelcome ? .inline : .large)
         .toolbar {
             ToolbarItem(placement: folder == nil ? .topBarLeading : .topBarTrailing) {
-                if !scopeDocuments.isEmpty {
+                if showsWelcome {
+                    HStack(spacing: 8) {
+                        Image(systemName: "tag.fill")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(.indigo)
+                            .accessibilityHidden(true)
+                        Text("MusTag")
+                            .font(.system(.title3, design: .rounded).weight(.bold))
+                            .foregroundStyle(.primary)
+                    }
+                    .accessibilityAddTraits(.isHeader)
+                } else if !scopeDocuments.isEmpty {
                     Button(selecting ? L10n.text("Done", "完成") : L10n.text("Select", "选择")) {
                         selecting.toggle()
                         selected = []
@@ -164,15 +177,7 @@ private struct LibraryContentsView: View {
             }
             .accessibilityIdentifier("folderEmptyState")
         } else {
-            ContentUnavailableView {
-                Label(L10n.text("Your music, organized", "整理你的音乐"), systemImage: "music.note.list")
-            } description: {
-                Text(L10n.text("Edit MP3, FLAC and M4A files from Files, iCloud Drive or your NAS.", "编辑来自“文件”、iCloud Drive 或 NAS 的 MP3、FLAC 和 M4A 文件。"))
-            } actions: {
-                addMenu
-                    .buttonStyle(.borderedProminent)
-                    .disabled(model.isWorking)
-            }
+            WelcomeView(isImporting: model.isWorking) { picker = $0 }
         }
     }
 
