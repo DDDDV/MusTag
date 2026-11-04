@@ -444,7 +444,7 @@ final class MusicRecognitionTests: XCTestCase {
         XCTAssertNil(match.recordingID)
         XCTAssertNil(match.releaseID)
         XCTAssertNil(match.score, "Shazam must never be assigned a synthetic fingerprint percentage")
-        XCTAssertEqual(match.tags.genre, "Pop")
+        XCTAssertEqual(match.tags.genre, L10n.text("Pop", "流行"))
         XCTAssertTrue(match.tags.album.isEmpty)
         XCTAssertNotNil(match.appleMusicURL)
         let resolved = try await service.resolve(match)
@@ -501,6 +501,39 @@ final class MusicRecognitionTests: XCTestCase {
         }
         guard case .ambiguous = MusicRecognitionService.automaticMatch(from: [first, candidate("other", score: 1)], originalAlbum: "") else {
             return XCTFail("Mixed provider results cannot share a confidence scale")
+        }
+    }
+
+    func testGenresUseChineseNamesForEnglishProviderValues() {
+        XCTAssertEqual(
+            GenreLocalization.localized(["pop", "Mandopop", "MUSIC", "Rock", "Jazz", "R&B/Soul"], isChinese: true),
+            "流行; 国语流行; 音乐; 摇滚; 爵士; R&B/灵魂乐")
+    }
+
+    func testGenresUseEnglishNamesForSimplifiedAndTraditionalChineseProviderValues() {
+        for genres in [["国语流行", "音乐", "国际流行"], ["國語流行", "音樂", "國際流行"]] {
+            XCTAssertEqual(GenreLocalization.localized(genres, isChinese: false), "Mandopop; Music; Pop")
+        }
+    }
+
+    func testGenreAliasesDeduplicateWithoutChangingProviderOrder() {
+        let genres = [" Jazz ", "pop", "国际流行", "流行", "POP", "Mandopop", "國語流行", "爵士"]
+        XCTAssertEqual(GenreLocalization.localized(genres, isChinese: true), "爵士; 流行; 国语流行")
+        XCTAssertEqual(GenreLocalization.localized(genres, isChinese: false), "Jazz; Pop; Mandopop")
+    }
+
+    func testUnknownGenresKeepTheirOriginalTextInBothLanguages() {
+        let genres = ["  Future Garage  ", "地方曲风", "R&B/Soul"]
+        XCTAssertEqual(GenreLocalization.localized(genres, isChinese: true), "Future Garage; 地方曲风; R&B/灵魂乐")
+        XCTAssertEqual(GenreLocalization.localized(genres, isChinese: false), "Future Garage; 地方曲风; R&B/Soul")
+    }
+
+    func testGenreLocalizationOmitsEmptyValuesAndTrimsWhitespace() {
+        for isChinese in [false, true] {
+            XCTAssertEqual(GenreLocalization.localized([], isChinese: isChinese), "")
+            XCTAssertEqual(GenreLocalization.localized(["", " \n\t "], isChinese: isChinese), "")
+            XCTAssertEqual(GenreLocalization.localized(["", " \nPop\t ", "  "], isChinese: isChinese),
+                           isChinese ? "流行" : "Pop")
         }
     }
 

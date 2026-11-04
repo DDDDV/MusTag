@@ -62,7 +62,7 @@ final class ShazamFlowTests: XCTestCase {
         let document = try XCTUnwrap(context.model.document(context.document.id))
         XCTAssertEqual(document.draft.title, match.title)
         XCTAssertEqual(document.draft.artist, match.artist)
-        XCTAssertEqual(document.draft.genre, "Pop")
+        XCTAssertEqual(document.draft.genre, L10n.text("Pop", "流行"))
         XCTAssertEqual(document.draftArtwork, downloaded)
         XCTAssertNil(document.error)
         let candidate = try XCTUnwrap(context.model.candidates[document.id]?.first)
@@ -273,6 +273,51 @@ final class ShazamFlowTests: XCTestCase {
         XCTAssertEqual(context.model.document(context.document.id)?.draftShazamAttribution, previousAttribution)
         let persisted = try await context.store.loadLibrary()
         XCTAssertEqual(persisted.documents.first?.originalShazamAttribution, previousAttribution)
+    }
+
+    @MainActor
+    func testLocalizedShazamGenreMatchesDraftSavedFileAndRestoresOriginal() async throws {
+        let match = ShazamRecognitionResult(id: "111", title: "Original title", artist: "Original artist",
+                                           genres: ["国语流行", "音乐", "国际流行"])
+        let context = try await context(matches: [match])
+        defer { context.cleanUp() }
+        let expectedGenre = L10n.text("Mandopop; Music; Pop", "国语流行; 音乐; 流行")
+        let originalAudioHash = try NativeAudio.payloadHash(url: context.source)
+
+        context.model.identify([context.document.id], automaticallyApply: true)
+        try await waitUntilIdle(context.model)
+
+        let draft = try XCTUnwrap(context.model.document(context.document.id))
+        XCTAssertEqual(context.model.candidates[draft.id]?.first?.tags.genre, expectedGenre)
+        XCTAssertEqual(TagField.genre.value(in: draft.draft), expectedGenre,
+                       "The review sheet must show the same genre that will be written")
+        var expectedTags = context.document.original
+        expectedTags.genre = expectedGenre
+        XCTAssertEqual(draft.draft, expectedTags, "Genre localization must not change unrelated tags")
+        let pendingLibrary = try await context.store.loadLibrary()
+        XCTAssertEqual(pendingLibrary.documents.first?.draft.genre, expectedGenre)
+        try await assertOriginalUntouched(context)
+
+        context.model.save([draft.id])
+        try await waitUntilIdle(context.model)
+
+        let saved = try XCTUnwrap(context.model.document(draft.id))
+        XCTAssertFalse(saved.hasChanges)
+        XCTAssertEqual(saved.original.genre, expectedGenre)
+        XCTAssertEqual(try NativeMetadataCodec().read(from: context.source).tags.genre, expectedGenre)
+        XCTAssertEqual(try NativeAudio.payloadHash(url: context.source), originalAudioHash)
+        let savedLibrary = try await context.store.loadLibrary()
+        XCTAssertEqual(savedLibrary.documents.first?.original.genre, expectedGenre)
+        let backups = try await context.store.backups()
+        XCTAssertEqual(backups.count, 1)
+        let backup = try XCTUnwrap(backups.first)
+
+        context.model.restore(backup)
+        try await waitUntilIdle(context.model)
+
+        XCTAssertEqual(try Data(contentsOf: context.source), context.originalBytes)
+        XCTAssertEqual(try NativeMetadataCodec().read(from: context.source).tags.genre, context.document.original.genre)
+        XCTAssertEqual(context.model.document(draft.id)?.draft.genre, context.document.original.genre)
     }
 
     @MainActor

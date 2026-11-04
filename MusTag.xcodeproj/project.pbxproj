@@ -51,6 +51,7 @@
 		344948818E5A4F92EFD871E8 /* oggpage.cpp in Sources */ = {isa = PBXBuildFile; fileRef = FD053E589E4B07120B39184D /* oggpage.cpp */; };
 		34738233A784488D3A34F6C5 /* MTTagBridge.mm in Sources */ = {isa = PBXBuildFile; fileRef = 95B59F29F849424B23302886 /* MTTagBridge.mm */; };
 		347A1E77F7DF1C1D03C66263 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA59E2E5A8D3236DD4852B67 /* Models.swift */; };
+		AC5DAB026AC740CC97CF7A08 /* GenreLocalization.swift in Sources */ = {isa = PBXBuildFile; fileRef = BCD3A65279014331968B04A8 /* GenreLocalization.swift */; };
 		38131681F68C74A95E9628FF /* libChromaprint.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 6E0ABF603D3ACE22800BC4CD /* libChromaprint.a */; };
 		38FE7E8A6BB8557F81B9445E /* apeproperties.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 28C5F658EC879CC2BB4FC60D /* apeproperties.cpp */; };
 		3C8E2045EB4DE6CED4B2FD82 /* chroma.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 97B40A4201DEF7D37E3A26A5 /* chroma.cpp */; };
@@ -437,6 +438,7 @@
 		E9AE50C93A4011E723B644BB /* tagunion.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = tagunion.cpp; sourceTree = "<group>"; };
 		EA19D28EDEB1B8643A2D0F84 /* tableofcontentsframe.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = tableofcontentsframe.cpp; sourceTree = "<group>"; };
 		EA59E2E5A8D3236DD4852B67 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		BCD3A65279014331968B04A8 /* GenreLocalization.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GenreLocalization.swift; sourceTree = "<group>"; };
 		ED10DB69DA0D862CE590D156 /* urllinkframe.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = urllinkframe.cpp; sourceTree = "<group>"; };
 		ED794F75BA57F49D617D73DD /* mpegfile.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = mpegfile.cpp; sourceTree = "<group>"; };
 		F002C23B0ADB891998FF5C8F /* fingerprint_decompressor.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = fingerprint_decompressor.cpp; sourceTree = "<group>"; };
@@ -739,6 +741,7 @@
 			children = (
 				ADBF4B8366B7C2F346153CFA /* AppModel.swift */,
 				EA59E2E5A8D3236DD4852B67 /* Models.swift */,
+				BCD3A65279014331968B04A8 /* GenreLocalization.swift */,
 			);
 			path = Core;
 			sourceTree = "<group>";
@@ -1240,6 +1243,7 @@
 				7E157D4874CEAAC06DD7AC0A /* LibraryView.swift in Sources */,
 				34738233A784488D3A34F6C5 /* MTTagBridge.mm in Sources */,
 				347A1E77F7DF1C1D03C66263 /* Models.swift in Sources */,
+				AC5DAB026AC740CC97CF7A08 /* GenreLocalization.swift in Sources */,
 				81F41D12E3D2FEE05A53E23C /* MusTagApp.swift in Sources */,
 				DC6D15E5AD6A90963EEFCA13 /* MusicRecognitionService.swift in Sources */,
 				0D2982D1AFB216C72D9C1A90 /* NativeAudio.swift in Sources */,

@@ -377,7 +377,7 @@ actor MusicRecognitionService {
         // release date, or album artist. Leave those fields empty to preserve the draft.
         return MetadataCandidate(id: "shazam:\(match.id)", recordingID: nil,
             tags: AudioTags(title: title, artist: match.artist,
-                            genre: match.genres.joined(separator: "; ")),
+                            genre: GenreLocalization.localized(match.genres)),
             score: nil,
             detail: L10n.text("Shazam · song match; album edition not determined",
                               "Shazam · 歌曲匹配，尚未确定专辑版本"),
