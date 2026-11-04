@@ -4,6 +4,10 @@ import SwiftUI
 import AVFoundation
 #endif
 
+enum AppTab: Hashable {
+    case home, connections, settings
+}
+
 @MainActor
 final class AppModel: ObservableObject {
     @Published var documents: [AudioDocument] = []
@@ -25,7 +29,8 @@ final class AppModel: ObservableObject {
     @Published var completedCount = 0
     @Published var totalCount = 0
     @Published var notice: String?
-    @Published var showsSettings = false
+    @Published var selectedTab: AppTab = .home
+    @Published var settingsNavigationPath = NavigationPath()
 
     private let fileStore: AudioFileStore
     private let recognition: MusicRecognitionService
@@ -374,7 +379,11 @@ final class AppModel: ObservableObject {
 
     func identify(_ ids: Set<UUID>, automaticallyApply: Bool = false) {
         guard !isWorking else { return }
-        guard recognitionProvider != .acoustID || hasAPIKey else { showsSettings = true; return }
+        guard recognitionProvider != .acoustID || hasAPIKey else {
+            settingsNavigationPath = NavigationPath()
+            selectedTab = .settings
+            return
+        }
         let items = documents.filter { ids.contains($0.id) }
         guard !items.isEmpty else { return }
         begin(L10n.text("Identifying", "正在识别"), total: items.count)

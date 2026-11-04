@@ -5,6 +5,7 @@ struct TrackEditorView: View {
     let documentID: UUID
     @State private var showsReview = false
     @State private var showsDiscard = false
+    @FocusState private var focusedField: TagField?
 
     var body: some View {
         Group {
@@ -108,6 +109,13 @@ struct TrackEditorView: View {
                 .navigationTitle(L10n.text("Edit tags", "编辑标签"))
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
+                    if focusedField != nil {
+                        ToolbarItemGroup(placement: .keyboard) {
+                            Spacer()
+                            Button(L10n.text("Done", "完成")) { focusedField = nil }
+                                .accessibilityIdentifier("dismissKeyboardButton")
+                        }
+                    }
                     ToolbarItem(placement: .topBarTrailing) {
                         Menu {
                             Button(role: .destructive) { showsDiscard = true } label: {
@@ -230,6 +238,7 @@ struct TrackEditorView: View {
             .lineLimit(1...3)
             .autocorrectionDisabled()
             .textInputAutocapitalization(.never)
+            .focused($focusedField, equals: field)
             .accessibilityIdentifier("tag_\(field.rawValue)")
             if field.value(in: document.original) != field.value(in: document.draft) {
                 Text(L10n.text("Was: ", "原值：") + displayTag(field.value(in: document.original)))

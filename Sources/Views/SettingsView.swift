@@ -1,13 +1,19 @@
 import SwiftUI
 
+private enum SettingsDestination: Hashable {
+    case backups, licenses
+    case license(String)
+}
+
 struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
-    @Environment(\.dismiss) private var dismiss
     @State private var key = ""
+    @State private var hasLoadedKey = false
     @State private var keyError: String?
+    @FocusState private var keyIsFocused: Bool
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $model.settingsNavigationPath) {
             Form {
                 Section {
                     Picker(L10n.text("Recognition service", "识别服务"), selection: $model.recognitionProvider) {
@@ -39,10 +45,16 @@ struct SettingsView: View {
                             .textContentType(.password)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
+                            .focused($keyIsFocused)
                             .accessibilityIdentifier("apiKeyField")
                         if key != model.apiKey {
                             Button(L10n.text("Save key", "保存 Key")) {
-                                do { try model.saveAPIKey(key); keyError = nil }
+                                do {
+                                    try model.saveAPIKey(key)
+                                    key = model.apiKey
+                                    keyError = nil
+                                    keyIsFocused = false
+                                }
                                 catch { keyError = error.localizedDescription }
                             }
                             .accessibilityIdentifier("saveKeyButton")
@@ -67,9 +79,7 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    NavigationLink {
-                        BackupHistoryView()
-                    } label: {
+                    NavigationLink(value: SettingsDestination.backups) {
                         Label(L10n.text("Undo saved changes", "撤销已保存的修改"), systemImage: "clock.arrow.circlepath")
                     }
                     .accessibilityIdentifier("backupHistoryButton")
@@ -79,31 +89,37 @@ struct SettingsView: View {
 
                 Section {
                     LabeledContent(L10n.text("Version", "版本"), value: "0.1.0")
-                    NavigationLink(L10n.text("Open-source licenses", "开源许可")) { LicenseView() }
+                    NavigationLink(L10n.text("Open-source licenses", "开源许可"), value: SettingsDestination.licenses)
                         .accessibilityIdentifier("licensesButton")
                 } footer: {
                     Text(L10n.text("Personal preview · MP3, FLAC and M4A", "个人预览版 · MP3、FLAC 和 M4A"))
                 }
             }
+            .scrollDismissesKeyboard(.interactively)
             .navigationTitle(L10n.text("Settings", "设置"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(L10n.text("Done", "完成")) {
-                        if key != model.apiKey {
-                            do { try model.saveAPIKey(key) }
-                            catch { keyError = error.localizedDescription; return }
-                        }
-                        dismiss()
+                if keyIsFocused {
+                    ToolbarItemGroup(placement: .keyboard) {
+                        Spacer()
+                        Button(L10n.text("Done", "完成")) { keyIsFocused = false }
+                            .accessibilityIdentifier("dismissKeyboardButton")
                     }
-                    .accessibilityIdentifier("settingsDoneButton")
                 }
             }
-            .onAppear { key = model.apiKey }
+            .onAppear {
+                guard !hasLoadedKey else { return }
+                key = model.apiKey
+                hasLoadedKey = true
+            }
             .task { await model.refreshBackups() }
-            .alert(L10n.text("Notice", "提示"), isPresented: Binding(get: { model.notice != nil }, set: { if !$0 { model.notice = nil } })) {
-                Button(L10n.text("OK", "好"), role: .cancel) { model.notice = nil }
-            } message: { Text(model.notice ?? "") }
+            .navigationDestination(for: SettingsDestination.self) { destination in
+                switch destination {
+                case .backups: BackupHistoryView()
+                case .licenses: LicenseView()
+                case .license(let name): LicenseTextView(name: name)
+                }
+            }
         }
     }
 }
@@ -161,11 +177,11 @@ private struct LicenseView: View {
     var body: some View {
         List {
             Section {
-                NavigationLink("TagLib · MPL 1.1") { LicenseTextView(name: "TagLib-MPL-1.1") }
+                NavigationLink("TagLib · MPL 1.1", value: SettingsDestination.license("TagLib-MPL-1.1"))
                     .accessibilityIdentifier("taglibLicenseButton")
-                NavigationLink("TagLib · LGPL") { LicenseTextView(name: "TagLib-LGPL") }
-                NavigationLink("Chromaprint · LGPL 2.1") { LicenseTextView(name: "Chromaprint") }
-                NavigationLink("utf8cpp · Boost Software License") { LicenseTextView(name: "utf8cpp") }
+                NavigationLink("TagLib · LGPL", value: SettingsDestination.license("TagLib-LGPL"))
+                NavigationLink("Chromaprint · LGPL 2.1", value: SettingsDestination.license("Chromaprint"))
+                NavigationLink("utf8cpp · Boost Software License", value: SettingsDestination.license("utf8cpp"))
             }
             Section {
                 Link("ShazamKit", destination: URL(string: "https://developer.apple.com/shazamkit/")!)

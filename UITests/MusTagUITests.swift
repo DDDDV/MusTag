@@ -13,6 +13,18 @@ final class MusTagUITests: XCTestCase {
     func testEmptyLibraryOffersFilesAndFolderImport() {
         let welcome = app.descendants(matching: .any).matching(identifier: "welcomeScreen").firstMatch
         XCTAssertTrue(welcome.waitForExistence(timeout: 8))
+        let tabs = app.tabBars.buttons
+        XCTAssertEqual(tabs.allElementsBoundByIndex.map(\.label), ["Home", "Connections", "Settings"])
+        XCTAssertTrue(tabs["Home"].isSelected)
+        tabs["Connections"].tap()
+        XCTAssertTrue(app.navigationBars["Connections"].waitForExistence(timeout: 3))
+        XCTAssertTrue(tabs["Connections"].isSelected)
+        tabs["Settings"].tap()
+        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 3))
+        XCTAssertTrue(tabs["Settings"].isSelected)
+        tabs["Home"].tap()
+        XCTAssertTrue(welcome.waitForExistence(timeout: 3))
+        XCTAssertTrue(tabs["Home"].isSelected)
         let brand = app.descendants(matching: .any).matching(identifier: "welcomeBrandLabel").firstMatch
         XCTAssertTrue(brand.exists)
         XCTAssertEqual(brand.label, "MusTag")
@@ -33,6 +45,60 @@ final class MusTagUITests: XCTestCase {
         add.tap()
         XCTAssertTrue(app.buttons["chooseFilesButton"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.buttons["chooseFolderButton"].exists)
+    }
+
+    func testConnectionsGroupsAndImportEntrypoints() {
+        app.tabBars.buttons["Connections"].tap()
+        XCTAssertTrue(app.navigationBars["Connections"].waitForExistence(timeout: 3))
+        let list = app.collectionViews.firstMatch
+        for title in ["Local", "NAS & Servers"] {
+            let header = app.staticTexts.matching(NSPredicate(format: "label ==[c] %@", title)).firstMatch
+            XCTAssertTrue(header.exists, title)
+        }
+        capture("13-connections")
+
+        for identifier in ["connectionFilesButton", "connectionFolderButton"] {
+            let button = app.buttons[identifier]
+            XCTAssertTrue(button.isHittable, identifier)
+            button.tap()
+            let cancel = app.buttons["Cancel"].firstMatch
+            XCTAssertTrue(cancel.waitForExistence(timeout: 8))
+            cancel.tap()
+            expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: cancel)
+            waitForExpectations(timeout: 3)
+            XCTAssertTrue(app.navigationBars["Connections"].exists)
+            XCTAssertTrue(app.tabBars.buttons["Connections"].isSelected)
+        }
+
+        for (service, title) in [("smb", "SMB"), ("ftp", "FTP"),
+                                 ("webDAV", "WebDAV"), ("navidrome", "Navidrome")] {
+            let row = app.buttons["connectionService_\(service)"]
+            for _ in 0..<4 where !row.isHittable { list.swipeUp() }
+            XCTAssertTrue(row.isHittable, service)
+            row.tap()
+            let detail = app.descendants(matching: .any)
+                .matching(identifier: "connectionServiceDetail_\(service)").firstMatch
+            XCTAssertTrue(detail.waitForExistence(timeout: 3), service)
+            XCTAssertTrue(app.staticTexts.matching(NSPredicate(
+                format: "label CONTAINS %@", "Connections are not available yet.")).firstMatch.exists)
+            app.navigationBars[title].buttons.element(boundBy: 0).tap()
+            XCTAssertTrue(app.navigationBars["Connections"].waitForExistence(timeout: 3))
+            XCTAssertTrue(row.exists, service)
+        }
+
+        let cloud = app.buttons["connectionCloudButton"]
+        for _ in 0..<4 where !cloud.isHittable { list.swipeUp() }
+        XCTAssertTrue(cloud.isHittable)
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label ==[c] %@", "Cloud storage")).firstMatch.exists)
+        capture("14-connections-cloud-storage")
+        cloud.tap()
+        let cancel = app.buttons["Cancel"].firstMatch
+        XCTAssertTrue(cancel.waitForExistence(timeout: 8))
+        cancel.tap()
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: cancel)
+        waitForExpectations(timeout: 3)
+        XCTAssertTrue(app.navigationBars["Connections"].exists)
+        XCTAssertTrue(app.tabBars.buttons["Connections"].isSelected)
     }
 
     func testImportedFoldersSeparateFilesAndOpenNestedTracks() {
@@ -211,7 +277,7 @@ final class MusTagUITests: XCTestCase {
     }
 
     func testMissingKeyCanBeConfiguredWithoutNetwork() {
-        app.buttons["settingsButton"].tap()
+        app.tabBars.buttons["Settings"].tap()
         selectRecognitionService("AcoustID")
         let status = app.descendants(matching: .any).matching(identifier: "recognitionStatus").firstMatch
         XCTAssertTrue(status.waitForExistence(timeout: 5))
@@ -219,16 +285,26 @@ final class MusTagUITests: XCTestCase {
         let field = app.secureTextFields["apiKeyField"]
         XCTAssertTrue(field.exists)
         field.tap()
-        field.typeText("local-ui-test-key")
+        let keyDraft = "local-ui-test-key"
+        field.typeText(keyDraft)
+        dismissFormKeyboard()
+        app.tabBars.buttons["Home"].tap()
+        XCTAssertTrue(app.buttons["addAudioButton"].firstMatch.waitForExistence(timeout: 3))
+        app.tabBars.buttons["Settings"].tap()
+        XCTAssertTrue(field.waitForExistence(timeout: 3))
+        XCTAssertEqual((field.value as? String)?.count, keyDraft.count,
+                       "Switching tabs must keep the unsaved key input")
+        XCTAssertEqual(status.value as? String, "Key required")
+        XCTAssertTrue(app.buttons["saveKeyButton"].exists)
         app.buttons["saveKeyButton"].tap()
         expectation(for: NSPredicate(format: "value == %@", "Configured"), evaluatedWith: status)
         waitForExpectations(timeout: 3)
-        app.buttons["settingsDoneButton"].tap()
+        app.tabBars.buttons["Home"].tap()
         XCTAssertTrue(app.buttons["addAudioButton"].firstMatch.waitForExistence(timeout: 3))
     }
 
     func testLicensesAreReadableOffline() {
-        app.buttons["settingsButton"].tap()
+        app.tabBars.buttons["Settings"].tap()
         let licenses = app.buttons["licensesButton"]
         if !licenses.isHittable { app.swipeUp() }
         XCTAssertTrue(licenses.waitForExistence(timeout: 5))
@@ -257,6 +333,16 @@ final class MusTagUITests: XCTestCase {
         XCTAssertTrue(editedTitle.contains(insertedText))
         XCTAssertTrue(editedTitle.contains(originalTitle))
         XCTAssertEqual(editedTitle.count, originalTitle.count + insertedText.count)
+        dismissFormKeyboard()
+        app.tabBars.buttons["Connections"].tap()
+        XCTAssertTrue(app.navigationBars["Connections"].waitForExistence(timeout: 3))
+        app.tabBars.buttons["Settings"].tap()
+        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 3))
+        app.tabBars.buttons["Home"].tap()
+        XCTAssertTrue(app.navigationBars["Edit tags"].waitForExistence(timeout: 3))
+        XCTAssertTrue(title.waitForExistence(timeout: 3))
+        XCTAssertEqual(title.value as? String, editedTitle,
+                       "Switching tabs must keep the current editor and its draft")
         app.buttons["trackReviewButton"].tap()
         XCTAssertTrue(app.buttons["confirmSaveButton"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.staticTexts["Original title"].exists)
@@ -268,7 +354,7 @@ final class MusTagUITests: XCTestCase {
         waitForExpectations(timeout: 15)
         app.navigationBars["Edit tags"].buttons.element(boundBy: 0).tap()
         XCTAssertTrue(app.staticTexts[editedTitle].waitForExistence(timeout: 3))
-        app.buttons["settingsButton"].tap()
+        app.tabBars.buttons["Settings"].tap()
         app.buttons["backupHistoryButton"].tap()
         let restore = app.buttons["Restore original"].firstMatch
         XCTAssertTrue(restore.waitForExistence(timeout: 3))
@@ -276,7 +362,7 @@ final class MusTagUITests: XCTestCase {
         app.buttons["confirmRestoreButton"].tap()
         XCTAssertTrue(app.staticTexts["Restored"].waitForExistence(timeout: 15))
         app.navigationBars["Undo changes"].buttons.element(boundBy: 0).tap()
-        app.buttons["settingsDoneButton"].tap()
+        app.tabBars.buttons["Home"].tap()
         XCTAssertTrue(app.staticTexts["Original title"].waitForExistence(timeout: 5))
     }
 
@@ -284,19 +370,34 @@ final class MusTagUITests: XCTestCase {
         launchWithAudio()
         let audio = app.buttons["audioRow_UI Test.m4a"]
         XCTAssertTrue(audio.waitForExistence(timeout: 10))
-        app.buttons["settingsButton"].tap()
+        app.tabBars.buttons["Settings"].tap()
         selectRecognitionService("AcoustID")
-        app.buttons["settingsDoneButton"].tap()
+        let licenses = app.buttons["licensesButton"]
+        if !licenses.isHittable { app.swipeUp() }
+        licenses.tap()
+        XCTAssertTrue(app.navigationBars["Acknowledgements"].waitForExistence(timeout: 3))
+        app.tabBars.buttons["Home"].tap()
+        app.tabBars.buttons["Settings"].tap()
+        XCTAssertTrue(app.navigationBars["Acknowledgements"].waitForExistence(timeout: 3),
+                      "Normal tab switching must preserve the settings navigation stack")
+        app.tabBars.buttons["Home"].tap()
         audio.tap()
         app.buttons["trackIdentifyButton"].tap()
         let status = app.descendants(matching: .any).matching(identifier: "recognitionStatus").firstMatch
         XCTAssertTrue(status.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Settings"].exists,
+                      "Missing credentials must open the settings root, not its previous subpage")
         XCTAssertEqual(status.value as? String, "Key required")
         XCTAssertTrue(app.secureTextFields["apiKeyField"].exists)
+        XCTAssertTrue(app.tabBars.buttons["Settings"].isSelected)
+        app.tabBars.buttons["Home"].tap()
+        XCTAssertTrue(app.navigationBars["Edit tags"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["UI Test.m4a"].exists)
+        XCTAssertTrue(app.tabBars.buttons["Home"].isSelected)
     }
 
     func testRecognitionServiceSwitchShowsOnlyTheRequiredCredentials() {
-        app.buttons["settingsButton"].tap()
+        app.tabBars.buttons["Settings"].tap()
         let status = app.descendants(matching: .any).matching(identifier: "recognitionStatus").firstMatch
         XCTAssertTrue(status.waitForExistence(timeout: 5))
         XCTAssertEqual(status.value as? String, "No API key needed")
@@ -305,15 +406,15 @@ final class MusTagUITests: XCTestCase {
         selectRecognitionService("AcoustID")
         XCTAssertEqual(status.value as? String, "Key required")
         XCTAssertTrue(app.secureTextFields["apiKeyField"].exists)
-        app.buttons["settingsDoneButton"].tap()
-        app.buttons["settingsButton"].tap()
+        app.tabBars.buttons["Home"].tap()
+        app.tabBars.buttons["Settings"].tap()
         XCTAssertTrue(status.waitForExistence(timeout: 5))
         XCTAssertEqual(status.value as? String, "Key required")
 
         selectRecognitionService("ShazamKit")
         XCTAssertEqual(status.value as? String, "No API key needed")
         XCTAssertFalse(app.secureTextFields["apiKeyField"].exists)
-        app.buttons["settingsDoneButton"].tap()
+        app.tabBars.buttons["Home"].tap()
     }
 
     func testShazamRecognizesWithoutKeyAndKeepsResultsInDraftUntilSaved() {
@@ -322,12 +423,12 @@ final class MusTagUITests: XCTestCase {
         app.launch()
         let audio = app.buttons["audioRow_UI Test.m4a"]
         XCTAssertTrue(audio.waitForExistence(timeout: 10))
-        app.buttons["settingsButton"].tap()
+        app.tabBars.buttons["Settings"].tap()
         let status = app.descendants(matching: .any).matching(identifier: "recognitionStatus").firstMatch
         XCTAssertTrue(status.waitForExistence(timeout: 5))
         XCTAssertEqual(status.value as? String, "No API key needed")
         XCTAssertFalse(app.secureTextFields["apiKeyField"].exists)
-        app.buttons["settingsDoneButton"].tap()
+        app.tabBars.buttons["Home"].tap()
 
         app.buttons["identifyButton"].tap()
         let notice = app.alerts["Notice"]
@@ -534,7 +635,7 @@ final class MusTagUITests: XCTestCase {
         expectation(for: NSPredicate(format: "exists == true AND enabled == false"), evaluatedWith: review)
         waitForExpectations(timeout: 15)
         app.navigationBars["Edit tags"].buttons.element(boundBy: 0).tap()
-        app.buttons["settingsButton"].tap()
+        app.tabBars.buttons["Settings"].tap()
         app.buttons["backupHistoryButton"].tap()
         let restore = app.buttons["Restore original"].firstMatch
         XCTAssertTrue(restore.waitForExistence(timeout: 3))
@@ -542,12 +643,22 @@ final class MusTagUITests: XCTestCase {
         app.buttons["confirmRestoreButton"].tap()
         XCTAssertTrue(app.staticTexts["Restored"].waitForExistence(timeout: 15))
         app.navigationBars["Undo changes"].buttons.element(boundBy: 0).tap()
-        app.buttons["settingsDoneButton"].tap()
+        app.tabBars.buttons["Home"].tap()
         audio.tap()
         let noCover = app.staticTexts["No embedded cover"]
         for _ in 0..<5 where !noCover.isHittable { app.swipeUp() }
         XCTAssertTrue(noCover.exists)
         XCTAssertFalse(review.isEnabled)
+    }
+
+    private func dismissFormKeyboard() {
+        let keyboard = app.keyboards.firstMatch
+        guard keyboard.exists else { return }
+        let done = app.buttons["dismissKeyboardButton"].firstMatch
+        XCTAssertTrue(done.waitForExistence(timeout: 3))
+        done.tap()
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: keyboard)
+        waitForExpectations(timeout: 3)
     }
 
     private func launchWithAudio() {

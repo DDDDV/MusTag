@@ -109,6 +109,7 @@
 		79126CD605652150B07E87EE /* itfile.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 474095A4FC86364C19780FD5 /* itfile.cpp */; };
 		7A27651FAC1FAA6331B7A67E /* Fixtures in Resources */ = {isa = PBXBuildFile; fileRef = 611076F922DC87F6F4D79C69 /* Fixtures */; };
 		7A739CB28F7D19A50F8BB8E2 /* Licenses in Resources */ = {isa = PBXBuildFile; fileRef = 87577CE756D76C43B6ED0D4D /* Licenses */; };
+		7A766688F87404B19CE35CDD /* MainTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A844FEB51E7438CF5763812 /* MainTabView.swift */; };
 		7B4D563061971A79BB4CE85B /* textidentificationframe.cpp in Sources */ = {isa = PBXBuildFile; fileRef = D8CFA9A2C2EC476B066C35C1 /* textidentificationframe.cpp */; };
 		7E157D4874CEAAC06DD7AC0A /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4261E1C02FDC23A6F91D7442 /* LibraryView.swift */; };
 		7E865189E89A8F68DAC6F71D /* WelcomeIllustration.swift in Sources */ = {isa = PBXBuildFile; fileRef = E74284870B49B0B1EEB4144B /* WelcomeIllustration.swift */; };
@@ -158,6 +159,7 @@
 		B949482C6CC86656353EE5BB /* audioproperties.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 6F64D6F459B2C54FEB18C004 /* audioproperties.cpp */; };
 		B966B55E2EA9D61B0D674503 /* oggflacfile.cpp in Sources */ = {isa = PBXBuildFile; fileRef = D9209EC15CF897D35DD50B65 /* oggflacfile.cpp */; };
 		BA435037F771C0FF724D4F79 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8E0364819302C859D754E82 /* SettingsView.swift */; };
+		BFC09146C3936E3D18984D43 /* ConnectionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6898BDC066FE5BA0CFF26068 /* ConnectionsView.swift */; };
 		C1306A6A573E04BFB5A5C960 /* asfattribute.cpp in Sources */ = {isa = PBXBuildFile; fileRef = C55278699EA745C71FAFE90C /* asfattribute.cpp */; };
 		C1567D84D206A1CA78832837 /* ShazamRecognitionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43D76111BE9C2F1B7419D8C2 /* ShazamRecognitionTests.swift */; };
 		C162AEB646099B77F948B430 /* modtag.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 4F9153A734474A3B0D982DEA /* modtag.cpp */; };
@@ -338,6 +340,7 @@
 		590C3646416160AB4921137E /* ReviewSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewSheet.swift; sourceTree = "<group>"; };
 		595F7091203619E40733AEF8 /* MusTagUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusTagUITests.swift; sourceTree = "<group>"; };
 		5A0F5A06809850A908664C88 /* AppleMusicMetadataService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleMusicMetadataService.swift; sourceTree = "<group>"; };
+		5A844FEB51E7438CF5763812 /* MainTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainTabView.swift; sourceTree = "<group>"; };
 		5D372EEF06103EBF2D558381 /* fingerprint_compressor.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = fingerprint_compressor.cpp; sourceTree = "<group>"; };
 		5FE3AF5492F69F39607345F1 /* fingerprint_calculator.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = fingerprint_calculator.cpp; sourceTree = "<group>"; };
 		611076F922DC87F6F4D79C69 /* Fixtures */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Fixtures; path = Tests/Fixtures; sourceTree = SOURCE_ROOT; };
@@ -347,6 +350,7 @@
 		6692DE6440935E337C7291F5 /* fingerprinter_configuration.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = fingerprinter_configuration.cpp; sourceTree = "<group>"; };
 		6696551FF71792FD7C6C6E60 /* tpicturetype.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = tpicturetype.cpp; sourceTree = "<group>"; };
 		683B3B2F068C08DC2CA2044D /* speexproperties.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = speexproperties.cpp; sourceTree = "<group>"; };
+		6898BDC066FE5BA0CFF26068 /* ConnectionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionsView.swift; sourceTree = "<group>"; };
 		6CB58FA72E4A3CD6157E245A /* mp4tag.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = mp4tag.cpp; sourceTree = "<group>"; };
 		6E0ABF603D3ACE22800BC4CD /* libChromaprint.a */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = archive.ar; path = libChromaprint.a; sourceTree = BUILT_PRODUCTS_DIR; };
 		6E3B1E5E89C0C54E4CF21FE4 /* mp4chapter.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = mp4chapter.cpp; sourceTree = "<group>"; };
@@ -620,7 +624,9 @@
 			children = (
 				CBBD471DC6B72DAC96E8AB70 /* ArtworkView.swift */,
 				43893B92F46E3599A78B9789 /* AudioDocumentPicker.swift */,
+				6898BDC066FE5BA0CFF26068 /* ConnectionsView.swift */,
 				4261E1C02FDC23A6F91D7442 /* LibraryView.swift */,
+				5A844FEB51E7438CF5763812 /* MainTabView.swift */,
 				590C3646416160AB4921137E /* ReviewSheet.swift */,
 				F8E0364819302C859D754E82 /* SettingsView.swift */,
 				2F2CB705542CDD2793666BCE /* TrackEditorView.swift */,
@@ -1256,11 +1262,13 @@
 				DF2382BDB4423973B4CF40F3 /* ArtworkView.swift in Sources */,
 				EBC2B80E6D8D5B929886A8D0 /* AudioDocumentPicker.swift in Sources */,
 				69AFBE37EB4A274B520B182A /* AudioFileStore.swift in Sources */,
+				BFC09146C3936E3D18984D43 /* ConnectionsView.swift in Sources */,
 				8D11E32FE07760A99BBD353D /* CoverArtService.swift in Sources */,
 				DF9FD25832565875D5C162FD /* CoverArtUITestSupport.swift in Sources */,
 				EDD9CB70168FD24C320EF9EF /* GenreLocalization.swift in Sources */,
 				7E157D4874CEAAC06DD7AC0A /* LibraryView.swift in Sources */,
 				34738233A784488D3A34F6C5 /* MTTagBridge.mm in Sources */,
+				7A766688F87404B19CE35CDD /* MainTabView.swift in Sources */,
 				347A1E77F7DF1C1D03C66263 /* Models.swift in Sources */,
 				81F41D12E3D2FEE05A53E23C /* MusTagApp.swift in Sources */,
 				DC6D15E5AD6A90963EEFCA13 /* MusicRecognitionService.swift in Sources */,

@@ -7,7 +7,7 @@ struct MusTagApp: App {
 
     var body: some Scene {
         WindowGroup {
-            LibraryView()
+            MainTabView()
                 .environmentObject(model)
                 .tint(.indigo)
                 .task { await model.load() }

@@ -1,8 +1,6 @@
 import SwiftUI
 
 struct LibraryView: View {
-    @EnvironmentObject private var model: AppModel
-
     var body: some View {
         NavigationStack {
             LibraryContentsView()
@@ -12,12 +10,6 @@ struct LibraryView: View {
                 .navigationDestination(for: AudioFolder.self) { folder in
                     LibraryContentsView(folder: folder)
                 }
-        }
-        .sheet(isPresented: $model.showsSettings) { SettingsView() }
-        .alert(L10n.text("Notice", "提示"), isPresented: Binding(get: { model.notice != nil && !model.showsSettings }, set: { if !$0 { model.notice = nil } })) {
-            Button(L10n.text("OK", "好"), role: .cancel) { model.notice = nil }
-        } message: {
-            Text(model.notice ?? "")
         }
     }
 }
@@ -109,13 +101,8 @@ private struct LibraryContentsView: View {
                 }
             }
             ToolbarItemGroup(placement: .topBarTrailing) {
-                if folder == nil {
-                    if !isEmpty { addMenu.disabled(model.isWorking) }
-                    Button { model.showsSettings = true } label: {
-                        Image(systemName: "gearshape")
-                    }
-                    .accessibilityLabel(L10n.text("Settings", "设置"))
-                    .accessibilityIdentifier("settingsButton")
+                if folder == nil, !isEmpty {
+                    addMenu.disabled(model.isWorking)
                 }
             }
         }

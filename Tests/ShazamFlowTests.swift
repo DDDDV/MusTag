@@ -35,7 +35,7 @@ final class ShazamFlowTests: XCTestCase {
         XCTAssertTrue(candidate.source == .shazamKit)
         XCTAssertNil(candidate.score, "Shazam results must not fabricate an AcoustID similarity score")
         XCTAssertEqual(context.model.appliedCandidateIDs[document.id], candidate.id)
-        XCTAssertFalse(context.model.showsSettings)
+        XCTAssertEqual(context.model.selectedTab, .home)
         try await assertOriginalUntouched(context)
     }
 
