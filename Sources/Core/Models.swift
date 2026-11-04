@@ -56,6 +56,15 @@ struct AudioDocument: Identifiable, Codable, Sendable {
     var fileName: String { url.lastPathComponent }
     var hasArtworkChanges: Bool { originalArtwork != draftArtwork }
     var hasChanges: Bool { original != draft || hasArtworkChanges }
+    var missingTagFields: [TagField] {
+        TagField.allCases.filter {
+            $0.value(in: draft).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+    var isMissingArtwork: Bool {
+        // A legacy entry's cover is unknown until its first successful refresh.
+        artworkVersion != nil && (draftArtwork?.data.isEmpty ?? true)
+    }
 }
 
 struct AudioFolder: Identifiable, Codable, Hashable, Sendable {

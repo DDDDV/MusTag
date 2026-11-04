@@ -349,13 +349,13 @@ private struct AudioRow: View {
     let candidateCount: Int
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(alignment: .top, spacing: 12) {
             ArtworkImage(artwork: document.draftArtwork, maximumPixelSize: 144)
                 .frame(width: 44, height: 44)
                 .clipShape(RoundedRectangle(cornerRadius: 7))
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 4) {
-                Text(document.draft.title.isEmpty ? document.fileName : document.draft.title)
+                Text(title)
                     .font(.body.weight(.medium))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
@@ -363,6 +363,10 @@ private struct AudioRow: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                if !missingMetadataLabels.isEmpty {
+                    MissingMetadataBadges(labels: missingMetadataLabels)
+                        .padding(.top, 3)
+                }
                 if let error = document.error {
                     Label(error, systemImage: "exclamationmark.circle")
                         .font(.caption)
@@ -378,17 +382,105 @@ private struct AudioRow: View {
                         .foregroundStyle(.indigo)
                 }
             }
-            Spacer(minLength: 0)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.vertical, 3)
     }
 
+    private var title: String {
+        let title = document.draft.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return title.isEmpty ? document.fileName : title
+    }
+
+    private var missingMetadataLabels: [String] {
+        (document.isMissingArtwork ? [L10n.text("Cover", "封面")] : [])
+            + document.missingTagFields.map(\.label)
+    }
+
     private var subtitle: String {
-        let values = [document.draft.artist, document.draft.album].filter { !$0.isEmpty }
+        let values = [document.draft.artist, document.draft.album]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
         if !values.isEmpty { return values.joined(separator: " · ") }
         let minutes = Int(document.duration) / 60
         let seconds = Int(document.duration) % 60
         return document.url.pathExtension.uppercased() + (document.duration > 0 ? String(format: " · %d:%02d", minutes, seconds) : "")
+    }
+}
+
+private struct MissingMetadataBadges: View {
+    let labels: [String]
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var tint: Color {
+        colorScheme == .dark
+            ? Color(red: 1, green: 0.77, blue: 0.38)
+            : Color(red: 0.48, green: 0.28, blue: 0.04)
+    }
+
+    var body: some View {
+        MetadataBadgeLayout(spacing: 5) {
+            Text(L10n.text("Missing", "待补充"))
+                .foregroundStyle(.secondary)
+                .padding(.vertical, 3)
+            ForEach(labels, id: \.self) { label in
+                Text(label)
+                    .foregroundStyle(tint)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(tint.opacity(colorScheme == .dark ? 0.14 : 0.08), in: Capsule())
+                    .overlay {
+                        Capsule().strokeBorder(tint.opacity(0.18), lineWidth: 0.5)
+                    }
+            }
+        }
+        .font(.caption2.weight(.medium))
+        .fixedSize(horizontal: false, vertical: true)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(L10n.text("Missing metadata", "缺失元数据"))
+        .accessibilityValue(labels.joined(separator: L10n.text(", ", "、")))
+    }
+}
+
+/// Keep every field visible, including in selection mode and at larger text sizes.
+private struct MetadataBadgeLayout: Layout {
+    var spacing: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        arrangement(width: proposal.width, subviews: subviews).size
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let result = arrangement(width: bounds.width, subviews: subviews)
+        for (index, subview) in subviews.enumerated() {
+            let frame = result.frames[index]
+            subview.place(at: CGPoint(x: bounds.minX + frame.minX, y: bounds.minY + frame.minY),
+                          anchor: .topLeading,
+                          proposal: ProposedViewSize(width: frame.width, height: frame.height))
+        }
+    }
+
+    private func arrangement(width: CGFloat?, subviews: Subviews) -> (size: CGSize, frames: [CGRect]) {
+        let limit = max(0, width ?? .infinity)
+        var frames: [CGRect] = []
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var usedWidth: CGFloat = 0
+        for subview in subviews {
+            let ideal = subview.sizeThatFits(.unspecified)
+            let size = subview.sizeThatFits(ProposedViewSize(width: min(ideal.width, limit), height: nil))
+            if x > 0 && x + size.width > limit {
+                x = 0
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            frames.append(CGRect(origin: CGPoint(x: x, y: y), size: size))
+            usedWidth = max(usedWidth, x + size.width)
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+        return (CGSize(width: usedWidth, height: y + rowHeight), frames)
     }
 }
 
