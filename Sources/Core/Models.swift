@@ -28,6 +28,12 @@ struct AudioSnapshot: Sendable {
     var artwork: AudioArtwork? = nil
 }
 
+struct ShazamAttribution: Codable, Equatable, Sendable {
+    var title: String
+    var artist: String
+    var appleMusicURL: URL?
+}
+
 struct AudioDocument: Identifiable, Codable, Sendable {
     var id = UUID()
     var url: URL
@@ -43,6 +49,8 @@ struct AudioDocument: Identifiable, Codable, Sendable {
     var artworkVersion: Int? = 1
     // Missing on older entries and empty for individually imported files.
     var importFolderIDs: Set<String>? = nil
+    var originalShazamAttribution: ShazamAttribution? = nil
+    var draftShazamAttribution: ShazamAttribution? = nil
     var fileName: String { url.lastPathComponent }
     var hasArtworkChanges: Bool { originalArtwork != draftArtwork }
     var hasChanges: Bool { original != draft || hasArtworkChanges }
@@ -59,15 +67,32 @@ struct AudioLibrary: Codable, Sendable {
     var folders: [AudioFolder]
 }
 
+enum RecognitionProvider: String, CaseIterable, Identifiable, Sendable {
+    case shazamKit
+    case acoustID
+
+    var id: String { rawValue }
+    var title: String { self == .shazamKit ? "ShazamKit" : "AcoustID" }
+}
+
+enum MetadataSource: Sendable {
+    case musicBrainz, acoustID, shazamKit
+}
+
 struct MetadataCandidate: Identifiable, Sendable {
     var id: String
-    var recordingID: String
+    // MusicBrainz identifiers only. Shazam identifiers must never enter MB/CAA URLs.
+    var recordingID: String?
     var releaseID: String?
     var tags: AudioTags
     var duration: Double?
     var score: Double?
     var detail: String
     var hasIncompleteReleaseInfo = false
+    var source: MetadataSource = .musicBrainz
+    var artworkURL: URL? = nil
+    var appleMusicURL: URL? = nil
+    var isrc: String? = nil
 }
 
 struct BackupRecord: Identifiable, Codable, Sendable {
@@ -80,6 +105,7 @@ struct BackupRecord: Identifiable, Codable, Sendable {
     var originalHash: String
     var writtenHash: String
     var restored = false
+    var originalShazamAttribution: ShazamAttribution? = nil
 }
 
 struct ImportResult: Sendable {

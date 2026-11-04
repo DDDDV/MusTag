@@ -7,14 +7,17 @@ enum AutomaticMatchDecision: Sendable {
     case noMatch
 }
 
-/// Personal-use AcoustID + MusicBrainz integration. No audio is uploaded.
+/// ShazamKit or AcoustID recognition, with separate MusicBrainz edition searches.
+/// Both recognition providers receive signatures, not the original audio.
 /// A recording score applies to every release edition of that recording.
 actor MusicRecognitionService {
     typealias FingerprintProvider = @Sendable (URL) async throws -> (fingerprint: String, duration: Double)
+    typealias ShazamProvider = @Sendable (URL) async throws -> [ShazamRecognitionResult]
     static let automaticMatchThreshold = 0.9
 
     private let session: URLSession
     private let fingerprintProvider: FingerprintProvider
+    private let shazamProvider: ShazamProvider
     private let minimumMusicBrainzInterval: TimeInterval
     private let minimumAcoustIDInterval: TimeInterval
     private var nextMusicBrainzRequest = Date.distantPast
@@ -29,6 +32,9 @@ actor MusicRecognitionService {
          minimumAcoustIDInterval: TimeInterval = 0.35,
          fingerprintProvider: @escaping FingerprintProvider = { url in
              try await NativeAudio.fingerprint(url: url)
+         },
+         shazamProvider: @escaping ShazamProvider = { url in
+             try await ShazamRecognitionService.recognize(url: url)
          }) {
         if let session {
             self.session = session
@@ -43,9 +49,18 @@ actor MusicRecognitionService {
         self.minimumMusicBrainzInterval = minimumMusicBrainzInterval
         self.minimumAcoustIDInterval = minimumAcoustIDInterval
         self.fingerprintProvider = fingerprintProvider
+        self.shazamProvider = shazamProvider
     }
 
-    func identify(url: URL, apiKey: String) async throws -> [MetadataCandidate] {
+    func identify(url: URL, apiKey: String, provider: RecognitionProvider = .acoustID) async throws -> [MetadataCandidate] {
+        if provider == .shazamKit {
+            try Task.checkCancellation()
+            let staged = try Self.stageForReading(url)
+            defer { try? FileManager.default.removeItem(at: staged.deletingLastPathComponent()) }
+            let matches = try await shazamProvider(staged)
+            try Task.checkCancellation()
+            return Self.uniqueCandidates(matches.compactMap(Self.shazamCandidate))
+        }
         let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty else {
             throw MusTagError.message(L10n.text("Add your AcoustID application API key in Settings to identify audio.",
@@ -98,7 +113,7 @@ actor MusicRecognitionService {
                     tags: tags, duration: match.duration, score: match.score,
                     detail: L10n.text("AcoustID · album details unavailable; try again later",
                                       "AcoustID · 暂时无法获取专辑信息，可稍后重试"),
-                    hasIncompleteReleaseInfo: true))
+                    hasIncompleteReleaseInfo: true, source: .acoustID))
             }
         }
         return Self.rankedCandidates(candidates)
@@ -127,6 +142,7 @@ actor MusicRecognitionService {
 
     /// Look up the selected edition, and fill track/disc only if unambiguous.
     func resolve(_ candidate: MetadataCandidate) async throws -> MetadataCandidate {
+        guard candidate.source != .shazamKit else { return candidate }
         guard let releaseID = candidate.releaseID else { return candidate }
         let release: MBRelease
         if let cached = releaseCache[releaseID] {
@@ -336,7 +352,8 @@ actor MusicRecognitionService {
         guard let releases = recording.releases, !releases.isEmpty else {
             return [MetadataCandidate(id: recording.id, recordingID: recording.id, tags: base,
                 duration: duration, score: fingerprintScore,
-                detail: L10n.text("MusicBrainz · recording only", "MusicBrainz · 仅录音信息"))]
+                detail: L10n.text("MusicBrainz · recording only", "MusicBrainz · 仅录音信息"),
+                source: fingerprintScore == nil ? .musicBrainz : .acoustID)]
         }
         // Every returned edition is needed to detect ties and match an existing album.
         // Editions share the recording's score; they have no independent fingerprint score.
@@ -348,11 +365,34 @@ actor MusicRecognitionService {
                 .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
             return MetadataCandidate(id: "\(recording.id):\(release.id)", recordingID: recording.id,
                 releaseID: release.id, tags: base, duration: duration, score: fingerprintScore,
-                detail: description.isEmpty ? "MusicBrainz" : description)
+                detail: description.isEmpty ? "MusicBrainz" : description,
+                source: fingerprintScore == nil ? .musicBrainz : .acoustID)
         }
     }
 
+    private static func shazamCandidate(_ match: ShazamRecognitionResult) -> MetadataCandidate? {
+        let title = match.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty, !match.id.isEmpty else { return nil }
+        // The base Shazam match does not identify a physical release, track/disc,
+        // release date, or album artist. Leave those fields empty to preserve the draft.
+        return MetadataCandidate(id: "shazam:\(match.id)", recordingID: nil,
+            tags: AudioTags(title: title, artist: match.artist,
+                            genre: match.genres.joined(separator: "; ")),
+            score: nil,
+            detail: L10n.text("Shazam · song match; album edition not determined",
+                              "Shazam · 歌曲匹配，尚未确定专辑版本"),
+            source: .shazamKit, artworkURL: match.artworkURL,
+            appleMusicURL: validatedAppleMusicURL(match.appleMusicURL), isrc: match.isrc)
+    }
+
+    private static func validatedAppleMusicURL(_ url: URL?) -> URL? {
+        guard let url, url.scheme?.lowercased() == "https", url.host?.lowercased() == "music.apple.com",
+              url.user == nil, url.password == nil, url.port == nil || url.port == 443 else { return nil }
+        return url
+    }
+
     static func resolve(_ candidate: MetadataCandidate, with release: MBRelease) -> MetadataCandidate {
+        guard candidate.source != .shazamKit, candidate.recordingID != nil else { return candidate }
         var result = candidate
         result.tags.album = release.title
         result.tags.albumArtist = MBArtistCredit.display(release.artistCredit)
@@ -404,6 +444,13 @@ actor MusicRecognitionService {
     }
 
     static func automaticMatch(from candidates: [MetadataCandidate], originalAlbum: String) -> AutomaticMatchDecision {
+        // Shazam's recognition result is not an AcoustID similarity percentage.
+        // Apply only one distinct match; multiple songs always require a choice.
+        if candidates.contains(where: { $0.source == .shazamKit }) {
+            let matches = uniqueCandidates(candidates)
+            guard matches.count == 1, let match = matches.first, !match.tags.title.isEmpty else { return .ambiguous }
+            return .selected(match)
+        }
         let ranked = rankedCandidates(candidates)
         guard let first = ranked.first, let highestScore = validFingerprintScore(first.score) else {
             return .noMatch

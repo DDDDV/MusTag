@@ -165,6 +165,7 @@ actor AudioFileStore {
             writtenHash: writtenHash
         )
         backup.id = backupID
+        backup.originalShazamAttribution = document.originalShazamAttribution
         var journal = try readJournal()
         journal.append(backup)
         try writeJSON(journal, to: journalURL)
@@ -194,6 +195,7 @@ actor AudioFileStore {
         updated.draft = verified.tags
         updated.originalArtwork = verified.artwork
         updated.draftArtwork = verified.artwork
+        updated.originalShazamAttribution = document.draftShazamAttribution
         updated.artworkVersion = 1
         updated.duration = verified.duration
         updated.sourceHash = writtenHash
@@ -256,6 +258,8 @@ actor AudioFileStore {
             error: nil, sourceHash: backup.originalHash,
             originalArtwork: snapshot.artwork, draftArtwork: snapshot.artwork
         )
+        document.originalShazamAttribution = backup.originalShazamAttribution
+        document.draftShazamAttribution = backup.originalShazamAttribution
         do {
             document.importFolderIDs = try readLibrary().documents.first {
                 $0.id == document.id || $0.url.standardizedFileURL == document.url.standardizedFileURL

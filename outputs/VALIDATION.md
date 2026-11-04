@@ -34,3 +34,16 @@
 - [标签编辑](02-editor-ios18.png)
 - [修改预览](03-review-ios18.png)
 - [封面对比预览](04-cover-review-ios18.png)（隔离的固定响应与测试图片）
+
+
+## ShazamKit 接入增补（2026-11-04）
+
+分支：`codex/shazamkit-integration`，基于 `dev`。系统 ShazamKit 框架接入；未安装新依赖，未修改 Vendor。
+
+- **核心测试：119 / 119 通过**。包含真实 48kHz 双声道音频转为受限时长 Shazam 签名、三窗口匹配、未命中、取消、超时、错误脱敏、独立服务偏好、无 Key 识别、缺失标签保留、封面失败回退、草稿持久化、确认保存及完整备份恢复。Shazam 标识不用于 MusicBrainz/CAA 请求，不伪造 AcoustID 分数。
+- **UI：首轮 14 项中 13 项通过**。候选行改成独立按钮后，空白区域未命中按钮导致旧封面流程失败；已为完整候选行设置命中区域。最终重跑封面选择/预览/保存/恢复、AcoustID 自动匹配、Shazam 无 Key 自动匹配三项，全部通过。最后两项同时覆盖候选状态、Apple Music 独立链接及来源记录展示。
+- **通用 iPhone Release：通过，未签名**。保留原有签名团队与 Bundle Identifier，新增系统 ShazamKit 链接。
+- **账户服务已启用并复查**。已在团队 `947X8JA62C` 下注册明确的 App ID `app.mustag.personal`，开启 ShazamKit App Service，并重新打开后台记录确认保存成功。
+- **服务启用后的真机联网识别尚未验证**。自动化测试注入固定匹配/封面响应，真实命中及封面仍需实测，并使用对应团队签名。此验证不代表内容永久写入文件的许可已确认。
+
+日志分别为 `work/shazam-core-test.log`、`work/shazam-ui-test.log`、`work/shazam-ui-final-test.log`、`work/shazam-device-build.log`。最终 UI 结果：`work/DerivedData/Logs/Test/Test-MusTag-2026.11.04_12-58-00-+0800.xcresult`。

@@ -316,7 +316,7 @@ private struct LibraryContentsView: View {
                 .accessibilityIdentifier("reviewButton")
             }
             .controlSize(.large)
-            Text(L10n.text("Fixed 90% threshold · review drafts before saving", "固定 90% 门槛 · 草稿预览后保存"))
+            Text(model.recognitionHint)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)

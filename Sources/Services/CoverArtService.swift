@@ -2,7 +2,7 @@ import Foundation
 import ImageIO
 import UniformTypeIdentifiers
 
-/// Downloads only the front cover of the edition explicitly selected by the user.
+/// Downloads a selected release's front cover or the artwork returned by ShazamKit.
 actor CoverArtService {
     private let session: URLSession
     private static let maximumBytes = 8 * 1024 * 1024
@@ -36,25 +36,34 @@ actor CoverArtService {
         return nil
     }
 
-    private func download(_ url: URL) async throws -> AudioArtwork? {
+    /// Use the URL returned by ShazamKit unchanged; never substitute another recording's artwork.
+    func shazamCover(url: URL) async throws -> AudioArtwork? {
+        try Task.checkCancellation()
+        return try await download(url, provider: .shazam)
+    }
+
+    private func download(_ url: URL, provider: CoverArtProvider = .coverArtArchive) async throws -> AudioArtwork? {
+        guard CoverArtRedirectDelegate.allows(url, provider: provider) else {
+            throw Self.invalidResponse(provider: provider)
+        }
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 25)
         request.setValue("image/jpeg, image/png", forHTTPHeaderField: "Accept")
         request.setValue("MusTag/0.1.0", forHTTPHeaderField: "User-Agent")
-        let redirectDelegate = CoverArtRedirectDelegate(initialURL: url)
+        let redirectDelegate = CoverArtRedirectDelegate(initialURL: url, provider: provider)
         do {
             let (bytes, response) = try await session.bytes(for: request, delegate: redirectDelegate)
             // Also cancel on 404, rejected headers, oversized bodies, and task cancellation.
             defer { bytes.task.cancel() }
             try Task.checkCancellation()
             guard let http = response as? HTTPURLResponse,
-                  CoverArtRedirectDelegate.allows(http.url) else {
-                throw Self.invalidResponse()
+                  CoverArtRedirectDelegate.allows(http.url, provider: provider) else {
+                throw Self.invalidResponse(provider: provider)
             }
             if http.statusCode == 404 { return nil }
             guard http.statusCode == 200 else {
                 throw MusTagError.message(L10n.text(
-                    "Cover Art Archive could not provide this cover (HTTP \(http.statusCode)). Try again later.",
-                    "Cover Art Archive 暂时无法提供此封面（HTTP \(http.statusCode)），请稍后重试。"))
+                    "\(provider.name) could not provide this cover (HTTP \(http.statusCode)). Try again later.",
+                    "\(provider.name) 暂时无法提供此封面（HTTP \(http.statusCode)），请稍后重试。"))
             }
             guard response.expectedContentLength <= Int64(Self.maximumBytes) else { throw Self.tooLarge() }
             var data = Data()
@@ -66,31 +75,32 @@ actor CoverArtService {
                 if data.count.isMultiple(of: 16_384) { try Task.checkCancellation() }
             }
             try Task.checkCancellation()
-            return try Self.artwork(from: data)
+            return try Self.artwork(from: data, provider: provider)
         } catch is CancellationError {
             throw CancellationError()
         } catch let error as URLError where error.code == .cancelled {
             throw CancellationError()
         } catch let error as URLError {
             if Task.isCancelled { throw CancellationError() }
-            throw Self.downloadError(error, fallbackHost: redirectDelegate.lastAllowedHost)
+            throw Self.downloadError(error, fallbackHost: redirectDelegate.lastAllowedHost, provider: provider)
         } catch let error as MusTagError {
             throw error
         } catch {
             if Task.isCancelled { throw CancellationError() }
             throw MusTagError.message(L10n.text(
-                "Unable to download the cover from Cover Art Archive. Check your connection and retry.",
-                "无法从 Cover Art Archive 下载封面，请检查网络后重试。"))
+                "Unable to download the cover from \(provider.name). Check your connection and retry.",
+                "无法从 \(provider.name) 下载封面，请检查网络后重试。"))
         }
     }
 
     /// Keep only an allowlisted hostname and a numeric code; URL paths and error descriptions
     /// can contain request details and must never be echoed into the user-visible message.
-    static func downloadError(_ error: URLError, fallbackHost: String) -> MusTagError {
+    static func downloadError(_ error: URLError, fallbackHost: String,
+                              provider: CoverArtProvider = .coverArtArchive) -> MusTagError {
         let failingURL = error.userInfo[NSURLErrorFailingURLErrorKey] as? URL
-        let host = CoverArtRedirectDelegate.safeHost(failingURL)
-            ?? CoverArtRedirectDelegate.safeHost(URL(string: "https://\(fallbackHost)"))
-            ?? "coverartarchive.org"
+        let host = CoverArtRedirectDelegate.safeHost(failingURL, provider: provider)
+            ?? CoverArtRedirectDelegate.safeHost(URL(string: "https://\(fallbackHost)"), provider: provider)
+            ?? provider.fallbackHost
         let reason: String
         switch error.code {
         case .timedOut:
@@ -128,7 +138,7 @@ actor CoverArtService {
         return .message("\(reason) (\(host) · NSURLErrorDomain \(error.code.rawValue))")
     }
 
-    private static func artwork(from data: Data) throws -> AudioArtwork {
+    private static func artwork(from data: Data, provider: CoverArtProvider) throws -> AudioArtwork {
         guard !data.isEmpty,
               let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
               CGImageSourceGetStatus(source) == .statusComplete,
@@ -141,7 +151,7 @@ actor CoverArtService {
               width.doubleValue > 0, height.doubleValue > 0,
               width.doubleValue <= 16_384, height.doubleValue <= 16_384,
               width.doubleValue * height.doubleValue <= 40_000_000 else {
-            throw invalidResponse()
+            throw invalidResponse(provider: provider)
         }
         // Force decoding before accepting a successful HTTP response as usable artwork.
         let options: [CFString: Any] = [
@@ -150,14 +160,14 @@ actor CoverArtService {
             kCGImageSourceShouldCacheImmediately: true
         ]
         guard CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) != nil else {
-            throw invalidResponse()
+            throw invalidResponse(provider: provider)
         }
         return AudioArtwork(data: data, mimeType: type == UTType.jpeg.identifier ? "image/jpeg" : "image/png")
     }
 
-    private static func invalidResponse() -> MusTagError {
-        .message(L10n.text("Cover Art Archive returned an invalid or unsupported cover image.",
-                           "Cover Art Archive 返回的封面图片无效或格式不受支持。"))
+    private static func invalidResponse(provider: CoverArtProvider) -> MusTagError {
+        .message(L10n.text("\(provider.name) returned an invalid or unsupported cover image or URL.",
+                           "\(provider.name) 返回的封面图片或链接无效或不受支持。"))
     }
 
     private static func tooLarge() -> MusTagError {
@@ -165,13 +175,22 @@ actor CoverArtService {
     }
 }
 
-/// CAA redirects to Internet Archive hosts. Never follow an insecure or unrelated URL.
+enum CoverArtProvider: Sendable {
+    case coverArtArchive, shazam
+
+    var name: String { self == .coverArtArchive ? "Cover Art Archive" : "Shazam" }
+    var fallbackHost: String { self == .coverArtArchive ? "coverartarchive.org" : "mzstatic.com" }
+}
+
+/// Keep CAA/Internet Archive and Apple artwork redirects in separate trust domains.
 final class CoverArtRedirectDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     private let lock = NSLock()
+    private let provider: CoverArtProvider
     private var recordedHost: String
 
-    init(initialURL: URL) {
-        recordedHost = Self.safeHost(initialURL) ?? "coverartarchive.org"
+    init(initialURL: URL, provider: CoverArtProvider = .coverArtArchive) {
+        self.provider = provider
+        recordedHost = Self.safeHost(initialURL, provider: provider) ?? provider.fallbackHost
         super.init()
     }
 
@@ -181,15 +200,20 @@ final class CoverArtRedirectDelegate: NSObject, URLSessionTaskDelegate, @uncheck
         return recordedHost
     }
 
-    static func safeHost(_ url: URL?) -> String? {
-        guard allows(url) else { return nil }
+    static func safeHost(_ url: URL?, provider: CoverArtProvider = .coverArtArchive) -> String? {
+        guard allows(url, provider: provider) else { return nil }
         return url?.host?.lowercased()
     }
 
-    static func allows(_ url: URL?) -> Bool {
+    static func allows(_ url: URL?, provider: CoverArtProvider = .coverArtArchive) -> Bool {
         guard let url, url.scheme?.lowercased() == "https", url.user == nil, url.password == nil,
               url.port == nil || url.port == 443, let host = url.host?.lowercased() else { return false }
-        return host == "coverartarchive.org" || host == "archive.org" || host.hasSuffix(".archive.org")
+        switch provider {
+        case .coverArtArchive:
+            return host == "coverartarchive.org" || host == "archive.org" || host.hasSuffix(".archive.org")
+        case .shazam:
+            return host == "mzstatic.com" || host.hasSuffix(".mzstatic.com")
+        }
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask,
@@ -200,7 +224,7 @@ final class CoverArtRedirectDelegate: NSObject, URLSessionTaskDelegate, @uncheck
     }
 
     func allowedRedirect(_ request: URLRequest) -> URLRequest? {
-        guard let host = Self.safeHost(request.url) else { return nil }
+        guard let host = Self.safeHost(request.url, provider: provider) else { return nil }
         lock.lock()
         recordedHost = host
         lock.unlock()

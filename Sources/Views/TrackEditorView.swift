@@ -23,6 +23,10 @@ struct TrackEditorView: View {
                                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                             }
                         }
+                        if let attribution = document.draftShazamAttribution {
+                            ShazamAttributionView(attribution: attribution,
+                                                  linkIdentifier: "draftAppleMusicLink")
+                        }
                     }
 
                     Section {
@@ -69,7 +73,7 @@ struct TrackEditorView: View {
                     } header: {
                         Text(L10n.text("Cover", "封面"))
                     } footer: {
-                        Text(L10n.text("Choose a matching release to download its front cover. Tap the image to preview it; it is written only when you review and save.", "选择匹配的发行版本后下载对应正面封面。点击图片可放大预览，确认保存后才会写入文件。"))
+                        Text(L10n.text("Choose a matching result to download its cover. Tap the image to preview it; it is written only when you review and save.", "选择匹配结果后下载对应封面。点击图片可放大预览，确认保存后才会写入文件。"))
                     }
 
                     if let error = document.error {
@@ -83,13 +87,26 @@ struct TrackEditorView: View {
                     if let candidates = model.candidates[documentID], !candidates.isEmpty {
                         Section {
                             ForEach(candidates) { candidate in
-                                Button { model.useCandidate(candidate, for: documentID) } label: {
-                                    MetadataCandidateRow(candidate: candidate,
-                                                         isApplied: model.appliedCandidateIDs[documentID] == candidate.id)
+                                VStack(alignment: .leading, spacing: 10) {
+                                    Button { model.useCandidate(candidate, for: documentID) } label: {
+                                        MetadataCandidateRow(candidate: candidate,
+                                                             isApplied: model.appliedCandidateIDs[documentID] == candidate.id)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            .contentShape(Rectangle())
+                                    }
+                                    .buttonStyle(.plain)
+                                    .accessibilityIdentifier("metadataCandidate_\(candidate.id)")
+                                    .accessibilityAddTraits(model.appliedCandidateIDs[documentID] == candidate.id ? [.isSelected] : [])
+                                    .disabled(model.isWorking)
+                                    if let appleMusicURL = candidate.appleMusicURL {
+                                        Link(destination: appleMusicURL) {
+                                            Label(L10n.text("Listen on Apple Music", "在 Apple Music 中聆听"), systemImage: "arrow.up.right")
+                                                .font(.subheadline)
+                                        }
+                                        .buttonStyle(.borderless)
+                                        .accessibilityIdentifier("appleMusicLink_\(candidate.id)")
+                                    }
                                 }
-                                .accessibilityIdentifier("metadataCandidate_\(candidate.id)")
-                                .accessibilityAddTraits(model.appliedCandidateIDs[documentID] == candidate.id ? [.isSelected] : [])
-                                .disabled(model.isWorking)
                             }
                         } header: {
                             Text(L10n.text("Matching candidates", "匹配候选"))
@@ -98,7 +115,10 @@ struct TrackEditorView: View {
                                 if candidates.contains(where: { $0.score != nil }) {
                                     Text(L10n.text("Fingerprint matches are sorted by similarity. Matches below 90% or with unresolved edition choices need manual selection. You can choose another candidate at any time.", "指纹候选按相似度从高到低排列。低于 90% 或无法确定发行版本时需手动选择，也可以手动改选其他候选。"))
                                 }
-                                Text(L10n.text("The selected release fills the draft and downloads its cover. Missing fields keep their current values; unavailable covers keep the original cover. Review before saving.", "选中版本后填入草稿并下载封面。空缺字段保留现有内容，未获取到封面时保留原封面，预览确认后保存。"))
+                                if candidates.contains(where: { $0.source == .shazamKit }) {
+                                    Text(L10n.text("A single Shazam match fills the draft; multiple matches need manual selection. Shazam identifies the song, not its release edition. Search MusicBrainz for album, date, track and disc details.", "Shazam 返回唯一结果时填入草稿；多个结果需手动选择。识别歌曲不代表确定发行版本，专辑、日期、曲序及碟号可通过 MusicBrainz 搜索补全。"))
+                                }
+                                Text(L10n.text("The selected result fills the draft and downloads its cover. Missing fields keep their current values; unavailable covers keep the original cover. Review before saving.", "选中结果后填入草稿并下载封面。空缺字段保留现有内容，未获取到封面时保留原封面，预览确认后保存。"))
                             }
                         }
                     }
@@ -141,7 +161,7 @@ struct TrackEditorView: View {
                             .buttonStyle(.borderedProminent)
                             .disabled(!document.hasChanges)
                             .accessibilityIdentifier("trackReviewButton")
-                            Text(L10n.text("Fixed 90% threshold · results go into the draft", "固定 90% 门槛 · 匹配结果先填入草稿"))
+                            Text(model.recognitionHint)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -191,6 +211,33 @@ struct TrackEditorView: View {
     }
 }
 
+struct ShazamAttributionView: View {
+    let attribution: ShazamAttribution
+    // A later manual edit or MusicBrainz choice may preserve only some matched fields.
+    // Describe the persisted match as a record, not as the source of every current tag.
+    var context: String = L10n.text("Shazam recognition record", "Shazam 识别记录")
+    let linkIdentifier: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(context)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text([attribution.title, attribution.artist].filter { !$0.isEmpty }.joined(separator: " · "))
+                .font(.subheadline)
+            if let url = attribution.appleMusicURL {
+                Link(destination: url) {
+                    Label(L10n.text("Listen on Apple Music", "在 Apple Music 中聆听"), systemImage: "arrow.up.right")
+                        .font(.subheadline)
+                }
+                .buttonStyle(.borderless)
+                .accessibilityIdentifier(linkIdentifier)
+            }
+        }
+        .padding(.vertical, 3)
+    }
+}
+
 private struct MetadataCandidateRow: View {
     let candidate: MetadataCandidate
     let isApplied: Bool
@@ -206,6 +253,11 @@ private struct MetadataCandidateRow: View {
             VStack(alignment: .leading, spacing: 5) {
                 Text(candidate.tags.title).foregroundStyle(.primary).fontWeight(.medium)
                 Text(candidate.tags.artist).font(.subheadline).foregroundStyle(.secondary)
+                if candidate.source == .shazamKit {
+                    Text(L10n.text("Recognized with Shazam", "由 Shazam 识别"))
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.indigo)
+                }
                 if !candidate.tags.album.isEmpty {
                     Text(candidate.tags.album).font(.subheadline).foregroundStyle(.primary)
                 }

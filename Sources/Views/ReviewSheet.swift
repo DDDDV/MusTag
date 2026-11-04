@@ -19,6 +19,17 @@ struct ReviewSheet: View {
                 }
                 ForEach(documents) { document in
                     Section {
+                        if let attribution = document.draftShazamAttribution {
+                            ShazamAttributionView(attribution: attribution,
+                                context: L10n.text("Draft · Shazam recognition record", "草稿 · Shazam 识别记录"),
+                                linkIdentifier: "reviewDraftAppleMusicLink_\(document.id)")
+                        }
+                        if let attribution = document.originalShazamAttribution,
+                           attribution != document.draftShazamAttribution {
+                            ShazamAttributionView(attribution: attribution,
+                                context: L10n.text("Original · Shazam recognition record", "原始内容 · Shazam 识别记录"),
+                                linkIdentifier: "reviewOriginalAppleMusicLink_\(document.id)")
+                        }
                         if document.hasArtworkChanges {
                             VStack(alignment: .leading, spacing: 12) {
                                 Text(L10n.text("Cover", "封面"))

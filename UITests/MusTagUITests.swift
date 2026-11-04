@@ -196,6 +196,7 @@ final class MusTagUITests: XCTestCase {
 
     func testMissingKeyCanBeConfiguredWithoutNetwork() {
         app.buttons["settingsButton"].tap()
+        selectRecognitionService("AcoustID")
         let status = app.descendants(matching: .any).matching(identifier: "recognitionStatus").firstMatch
         XCTAssertTrue(status.waitForExistence(timeout: 5))
         XCTAssertEqual(status.value as? String, "Key required")
@@ -267,12 +268,89 @@ final class MusTagUITests: XCTestCase {
         launchWithAudio()
         let audio = app.buttons["audioRow_UI Test.m4a"]
         XCTAssertTrue(audio.waitForExistence(timeout: 10))
+        app.buttons["settingsButton"].tap()
+        selectRecognitionService("AcoustID")
+        app.buttons["settingsDoneButton"].tap()
         audio.tap()
         app.buttons["trackIdentifyButton"].tap()
         let status = app.descendants(matching: .any).matching(identifier: "recognitionStatus").firstMatch
         XCTAssertTrue(status.waitForExistence(timeout: 5))
         XCTAssertEqual(status.value as? String, "Key required")
         XCTAssertTrue(app.secureTextFields["apiKeyField"].exists)
+    }
+
+    func testRecognitionServiceSwitchShowsOnlyTheRequiredCredentials() {
+        app.buttons["settingsButton"].tap()
+        let status = app.descendants(matching: .any).matching(identifier: "recognitionStatus").firstMatch
+        XCTAssertTrue(status.waitForExistence(timeout: 5))
+        XCTAssertEqual(status.value as? String, "No API key needed")
+        XCTAssertFalse(app.secureTextFields["apiKeyField"].exists)
+
+        selectRecognitionService("AcoustID")
+        XCTAssertEqual(status.value as? String, "Key required")
+        XCTAssertTrue(app.secureTextFields["apiKeyField"].exists)
+        app.buttons["settingsDoneButton"].tap()
+        app.buttons["settingsButton"].tap()
+        XCTAssertTrue(status.waitForExistence(timeout: 5))
+        XCTAssertEqual(status.value as? String, "Key required")
+
+        selectRecognitionService("ShazamKit")
+        XCTAssertEqual(status.value as? String, "No API key needed")
+        XCTAssertFalse(app.secureTextFields["apiKeyField"].exists)
+        app.buttons["settingsDoneButton"].tap()
+    }
+
+    func testShazamRecognizesWithoutKeyAndKeepsResultsInDraftUntilSaved() {
+        app.terminate()
+        app.launchArguments += ["--ui-testing-with-audio", "--ui-testing-shazam"]
+        app.launch()
+        let audio = app.buttons["audioRow_UI Test.m4a"]
+        XCTAssertTrue(audio.waitForExistence(timeout: 10))
+        app.buttons["settingsButton"].tap()
+        let status = app.descendants(matching: .any).matching(identifier: "recognitionStatus").firstMatch
+        XCTAssertTrue(status.waitForExistence(timeout: 5))
+        XCTAssertEqual(status.value as? String, "No API key needed")
+        XCTAssertFalse(app.secureTextFields["apiKeyField"].exists)
+        app.buttons["settingsDoneButton"].tap()
+
+        app.buttons["identifyButton"].tap()
+        let notice = app.alerts["Notice"]
+        XCTAssertTrue(notice.waitForExistence(timeout: 15))
+        XCTAssertTrue(notice.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Added to drafts: 1")).firstMatch.exists)
+        notice.buttons["OK"].tap()
+        let review = app.buttons["reviewButton"]
+        XCTAssertTrue(review.isEnabled)
+        review.tap()
+        XCTAssertTrue(app.buttons["confirmSaveButton"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Original title"].exists)
+        XCTAssertTrue(app.staticTexts["Shazam matched title"].exists)
+        let reviewLink = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "reviewDraftAppleMusicLink_")).firstMatch
+        XCTAssertTrue(reviewLink.exists)
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(review.isEnabled)
+
+        audio.tap()
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "draftAppleMusicLink").firstMatch.waitForExistence(timeout: 5))
+        let candidate = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "metadataCandidate_")).firstMatch
+        for _ in 0..<7 where !candidate.isHittable { app.swipeUp() }
+        XCTAssertTrue(candidate.isHittable)
+        XCTAssertTrue(candidate.isSelected)
+        XCTAssertTrue(candidate.label.contains("Recognized with Shazam"))
+        XCTAssertFalse(candidate.label.contains("%"), "Shazam must not be presented as an AcoustID similarity score")
+        let appleMusicLink = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "appleMusicLink_")).firstMatch
+        XCTAssertTrue(appleMusicLink.exists)
+        XCTAssertEqual(candidate.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "appleMusicLink_")).count, 0,
+            "The Apple Music link must be separate from applying a candidate")
+        capture("11-shazam-candidate")
+        app.buttons["trackReviewButton"].tap()
+        XCTAssertTrue(app.buttons["confirmSaveButton"].waitForExistence(timeout: 5))
+        app.buttons["confirmSaveButton"].tap()
+        let trackReview = app.buttons["trackReviewButton"]
+        expectation(for: NSPredicate(format: "exists == true AND enabled == false"), evaluatedWith: trackReview)
+        waitForExpectations(timeout: 15)
     }
 
     func testAutomaticMatchingRanksCandidatesAndKeepsDraftUntilReviewSave() {
@@ -380,6 +458,12 @@ final class MusTagUITests: XCTestCase {
         app.terminate()
         app.launchArguments.append("--ui-testing-with-audio")
         app.launch()
+    }
+
+    private func selectRecognitionService(_ name: String) {
+        let picker = app.segmentedControls["recognitionProviderPicker"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 5))
+        picker.buttons[name].tap()
     }
 
     private func launchWithFolders() {

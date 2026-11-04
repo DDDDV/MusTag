@@ -31,6 +31,7 @@
 		13E37D71CE7D0FF66B22FF7E /* trueaudioproperties.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E02191D434DBA9D10A5074CF /* trueaudioproperties.cpp */; };
 		13F12944382BCE216A812E58 /* id3v2extendedheader.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 804E43347DBE49574B233F24 /* id3v2extendedheader.cpp */; };
 		16C8CE9C350E3A5055068183 /* flacmetadatablock.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 97C67AAD647317535DCDC23A /* flacmetadatablock.cpp */; };
+		19A33280E212A0FF036586EB /* ShazamKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 344385B1263A74CCFEE20E74 /* ShazamKit.framework */; };
 		1A1CED2AA3663703C74494FB /* mp4nerochapterlist.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 8A7A19AD38A2669339B817F1 /* mp4nerochapterlist.cpp */; };
 		1B31D6057E31602157C08F3A /* spectrum.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 833075840DB6A1765275A01B /* spectrum.cpp */; };
 		1B8D4E1BC6934183D87E627A /* tagutils.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 795553513ECA32C267E8A344 /* tagutils.cpp */; };
@@ -60,6 +61,7 @@
 		412129DDB96D4023BA67979C /* flacunknownmetadatablock.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 8336BB5D8C446F3BC39E780E /* flacunknownmetadatablock.cpp */; };
 		414BE6EE18AD442B0C2619A8 /* matroskaattachments.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 568B165ADBEEF4E8A7115819 /* matroskaattachments.cpp */; };
 		43C5595D7ABBC5649E02D688 /* chroma_resampler.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 41D924FB771100F9D82CBAC4 /* chroma_resampler.cpp */; };
+		46F88EEA3F965D56C86C5265 /* ShazamFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4815907F16E4AB322321791 /* ShazamFlowTests.swift */; };
 		4874A475291E179F5FC49CE4 /* dsffile.cpp in Sources */ = {isa = PBXBuildFile; fileRef = B08ADF15837EF19DF9F14563 /* dsffile.cpp */; };
 		49068DF3A0B97ACDDD12E969 /* matroskafile.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3FF9476E1889C07E0D4F6660 /* matroskafile.cpp */; };
 		4BB231C704A6DF0F1201FF4C /* fft.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 54D008E264DFB84173B5A892 /* fft.cpp */; };
@@ -148,11 +150,13 @@
 		AFE5701FB104E3BAE3AB5E45 /* base64.cpp in Sources */ = {isa = PBXBuildFile; fileRef = FCA46A43D708974A1FDBF696 /* base64.cpp */; };
 		B469B92578BDB1ACB6B9EF7A /* ebmlelement.cpp in Sources */ = {isa = PBXBuildFile; fileRef = BAE335AAD1D773E1E80C4160 /* ebmlelement.cpp */; };
 		B6F1777F3C629EE90BC94602 /* opusproperties.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7E902FA004E1AD3E13304089 /* opusproperties.cpp */; };
+		B73757782401736791CCC542 /* ShazamRecognitionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11F24213AF4B8F1F0E681B73 /* ShazamRecognitionService.swift */; };
 		B79617E69B7D66A30A1A17A2 /* itproperties.cpp in Sources */ = {isa = PBXBuildFile; fileRef = F2E16084D0D7228D46A97419 /* itproperties.cpp */; };
 		B949482C6CC86656353EE5BB /* audioproperties.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 6F64D6F459B2C54FEB18C004 /* audioproperties.cpp */; };
 		B966B55E2EA9D61B0D674503 /* oggflacfile.cpp in Sources */ = {isa = PBXBuildFile; fileRef = D9209EC15CF897D35DD50B65 /* oggflacfile.cpp */; };
 		BA435037F771C0FF724D4F79 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8E0364819302C859D754E82 /* SettingsView.swift */; };
 		C1306A6A573E04BFB5A5C960 /* asfattribute.cpp in Sources */ = {isa = PBXBuildFile; fileRef = C55278699EA745C71FAFE90C /* asfattribute.cpp */; };
+		C1567D84D206A1CA78832837 /* ShazamRecognitionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43D76111BE9C2F1B7419D8C2 /* ShazamRecognitionTests.swift */; };
 		C162AEB646099B77F948B430 /* modtag.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 4F9153A734474A3B0D982DEA /* modtag.cpp */; };
 		C25F20DD8CF49A878E54B344 /* relativevolumeframe.cpp in Sources */ = {isa = PBXBuildFile; fileRef = FA85429D5B1DC0A3D1C5878B /* relativevolumeframe.cpp */; };
 		C48D438620534EFC053FA056 /* ebmlfloatelement.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 29CE7F1166CFAF42D641568B /* ebmlfloatelement.cpp */; };
@@ -249,6 +253,7 @@
 		0AED8F8F3E85670B7F9EC4CE /* opusfile.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = opusfile.cpp; sourceTree = "<group>"; };
 		0D80FE4FF9623305058810A9 /* ebmlmasterelement.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ebmlmasterelement.cpp; sourceTree = "<group>"; };
 		0E5A0DBB261EC23B41C9B0B5 /* CoverArtServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoverArtServiceTests.swift; sourceTree = "<group>"; };
+		11F24213AF4B8F1F0E681B73 /* ShazamRecognitionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShazamRecognitionService.swift; sourceTree = "<group>"; };
 		12933F254B0284D8C7093D45 /* unknownframe.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = unknownframe.cpp; sourceTree = "<group>"; };
 		12B100957FBEDB99BFC67FD4 /* rifffile.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = rifffile.cpp; sourceTree = "<group>"; };
 		142562E8F2778EAB20DD3D98 /* matroskasimpletag.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = matroskasimpletag.cpp; sourceTree = "<group>"; };
@@ -282,6 +287,7 @@
 		30A62C0C4C512A59391BF301 /* shortenfile.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = shortenfile.cpp; sourceTree = "<group>"; };
 		31EDFCF8FE1C1680D4B1EA7D /* flacfile.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = flacfile.cpp; sourceTree = "<group>"; };
 		333E3A49183EDAB3CFA65776 /* tiostream.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = tiostream.cpp; sourceTree = "<group>"; };
+		344385B1263A74CCFEE20E74 /* ShazamKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ShazamKit.framework; path = System/Library/Frameworks/ShazamKit.framework; sourceTree = SDKROOT; };
 		367B0026C8338FC4A7C66C28 /* ebmldeferredbinaryelement.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ebmldeferredbinaryelement.cpp; sourceTree = "<group>"; };
 		37CB024675D4DDD6654622C1 /* ebmlmktracks.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ebmlmktracks.cpp; sourceTree = "<group>"; };
 		38C09C344F6F5BACF2D1F60D /* vorbisproperties.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = vorbisproperties.cpp; sourceTree = "<group>"; };
@@ -299,6 +305,7 @@
 		4293E79E1ABCEEA5E2B54DC6 /* tzlib.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = tzlib.cpp; sourceTree = "<group>"; };
 		430EB0FDF27C5C78C54C491E /* matroskachapteredition.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = matroskachapteredition.cpp; sourceTree = "<group>"; };
 		43893B92F46E3599A78B9789 /* AudioDocumentPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioDocumentPicker.swift; sourceTree = "<group>"; };
+		43D76111BE9C2F1B7419D8C2 /* ShazamRecognitionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShazamRecognitionTests.swift; sourceTree = "<group>"; };
 		44FC669791A1055F74AF5610 /* tfilestream.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = tfilestream.cpp; sourceTree = "<group>"; };
 		462E861CCE80F764978CD96B /* tfile.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = tfile.cpp; sourceTree = "<group>"; };
 		474095A4FC86364C19780FD5 /* itfile.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = itfile.cpp; sourceTree = "<group>"; };
@@ -409,6 +416,7 @@
 		D223F8C6D7C44DFAB7D1AC86 /* ebmlmktags.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ebmlmktags.cpp; sourceTree = "<group>"; };
 		D2C52D7A010D931F68944954 /* matroskasegment.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = matroskasegment.cpp; sourceTree = "<group>"; };
 		D3DFC54EF135CE36B6AB4284 /* mp4qtchapterlist.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = mp4qtchapterlist.cpp; sourceTree = "<group>"; };
+		D4815907F16E4AB322321791 /* ShazamFlowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShazamFlowTests.swift; sourceTree = "<group>"; };
 		D551D50A36D7582B6F8379A7 /* CoverArtUITestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoverArtUITestSupport.swift; sourceTree = "<group>"; };
 		D56541D3DA90CB2AEBCE0E36 /* asftag.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = asftag.cpp; sourceTree = "<group>"; };
 		D6D3C2DE7DAD70624AA0F077 /* ebmlmkseekhead.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ebmlmkseekhead.cpp; sourceTree = "<group>"; };
@@ -454,6 +462,7 @@
 				38131681F68C74A95E9628FF /* libChromaprint.a in Frameworks */,
 				F3E6A7042253F2E0BFF94C06 /* Accelerate.framework in Frameworks */,
 				336AAB19DB59A2082D8A7BDF /* AVFoundation.framework in Frameworks */,
+				19A33280E212A0FF036586EB /* ShazamKit.framework in Frameworks */,
 				0F120ACBDAECB350E28ABD09 /* ImageIO.framework in Frameworks */,
 				2C4F9B4A1593A56D8FDF5BD6 /* libz.tbd in Frameworks */,
 			);
@@ -678,6 +687,7 @@
 				1FD5A9D335DC41CF7ADCB701 /* AVFoundation.framework */,
 				C3AFEF4885EE408563D14718 /* ImageIO.framework */,
 				6EB1947113289D6A17DD6355 /* libz.tbd */,
+				344385B1263A74CCFEE20E74 /* ShazamKit.framework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -785,6 +795,7 @@
 				52FCF17EB854482C14D31D07 /* MusicRecognitionService.swift */,
 				1669584EDD2F27F9BC173519 /* NativeAudio.swift */,
 				F2FCB4BB1F1B457FAFC1B9B9 /* NativeMetadataCodec.swift */,
+				11F24213AF4B8F1F0E681B73 /* ShazamRecognitionService.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -1009,6 +1020,8 @@
 				2C91B40993998C25BB81D43E /* LibraryFlowTests.swift */,
 				4004D5F6EF721D62A5F28880 /* MusicRecognitionTests.swift */,
 				72097A2B45740AF7A85AAB7B /* NativeAudioTests.swift */,
+				D4815907F16E4AB322321791 /* ShazamFlowTests.swift */,
+				43D76111BE9C2F1B7419D8C2 /* ShazamRecognitionTests.swift */,
 			);
 			path = Tests;
 			sourceTree = "<group>";
@@ -1233,6 +1246,7 @@
 				CECBDA0CAEC33860796FE2C7 /* NativeMetadataCodec.swift in Sources */,
 				C4FCBC965BC7353B0C96D475 /* ReviewSheet.swift in Sources */,
 				BA435037F771C0FF724D4F79 /* SettingsView.swift in Sources */,
+				B73757782401736791CCC542 /* ShazamRecognitionService.swift in Sources */,
 				54A0AFB794DA461F6815FBA7 /* TrackEditorView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -1427,6 +1441,8 @@
 				8C927EAD8FBC778AA0D9B425 /* LibraryFlowTests.swift in Sources */,
 				E42805FE005B783CE55F5851 /* MusicRecognitionTests.swift in Sources */,
 				F7369280A063F1715E86E7BB /* NativeAudioTests.swift in Sources */,
+				46F88EEA3F965D56C86C5265 /* ShazamFlowTests.swift in Sources */,
+				C1567D84D206A1CA78832837 /* ShazamRecognitionTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

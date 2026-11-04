@@ -10,34 +10,60 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 Section {
-                    SecureField(L10n.text("Application API key", "Application API Key"), text: $key)
-                        .textContentType(.password)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .accessibilityIdentifier("apiKeyField")
-                    if key != model.apiKey {
-                        Button(L10n.text("Save key", "保存 Key")) {
-                            do { try model.saveAPIKey(key); keyError = nil }
-                            catch { keyError = error.localizedDescription }
+                    Picker(L10n.text("Recognition service", "识别服务"), selection: $model.recognitionProvider) {
+                        ForEach(RecognitionProvider.allCases) { provider in
+                            Text(provider.title).tag(provider)
                         }
-                        .accessibilityIdentifier("saveKeyButton")
                     }
-                    if let keyError {
-                        Text(keyError).font(.footnote).foregroundStyle(.red)
+                    .pickerStyle(.segmented)
+                    .accessibilityIdentifier("recognitionProviderPicker")
+                    .disabled(model.isWorking)
+                    if model.recognitionProvider == .shazamKit {
+                        LabeledContent("ShazamKit", value: L10n.text("No API key needed", "无需 API Key"))
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel("ShazamKit")
+                            .accessibilityValue(L10n.text("No API key needed", "无需 API Key"))
+                            .accessibilityIdentifier("recognitionStatus")
                     }
-                    LabeledContent(L10n.text("Fingerprint recognition", "指纹识别")) {
-                        Text(model.hasAPIKey ? L10n.text("Configured", "已配置") : L10n.text("Key required", "需要配置 Key"))
-                            .foregroundStyle(.secondary)
-                    }
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(L10n.text("Fingerprint recognition", "指纹识别"))
-                    .accessibilityValue(model.hasAPIKey ? L10n.text("Configured", "已配置") : L10n.text("Key required", "需要配置 Key"))
-                    .accessibilityIdentifier("recognitionStatus")
-                    Link(L10n.text("Get an AcoustID application key", "获取 AcoustID 应用 Key"), destination: URL(string: "https://acoustid.org/new-application")!)
                 } header: {
-                    Text("AcoustID")
+                    Text(L10n.text("Music recognition", "歌曲识别"))
                 } footer: {
-                    Text(L10n.text("Use an application key, not a user key. Recognition sends only the audio fingerprint and duration. Your key is stored securely on this device. Manual editing and title search work without a key.", "请填写应用 Key，而非用户 Key。识别仅发送音频指纹和时长；Key 安全保存在此设备。未配置时仍可手动编辑和按歌名搜索。"))
+                    if model.recognitionProvider == .shazamKit {
+                        Text(L10n.text("ShazamKit identifies selected files without using the microphone. Audio signatures are sent to Apple; the original audio is not uploaded. Review matched tags and covers before saving.", "ShazamKit 直接识别所选文件，无需使用麦克风。音频签名会发送至 Apple，原音频不会上传。匹配的标签和封面需预览确认后保存。"))
+                    }
+                }
+
+                if model.recognitionProvider == .acoustID {
+                    Section {
+                        SecureField(L10n.text("Application API key", "Application API Key"), text: $key)
+                            .textContentType(.password)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .accessibilityIdentifier("apiKeyField")
+                        if key != model.apiKey {
+                            Button(L10n.text("Save key", "保存 Key")) {
+                                do { try model.saveAPIKey(key); keyError = nil }
+                                catch { keyError = error.localizedDescription }
+                            }
+                            .accessibilityIdentifier("saveKeyButton")
+                        }
+                        if let keyError {
+                            Text(keyError).font(.footnote).foregroundStyle(.red)
+                        }
+                        LabeledContent(L10n.text("Fingerprint recognition", "指纹识别")) {
+                            Text(model.hasAPIKey ? L10n.text("Configured", "已配置") : L10n.text("Key required", "需要配置 Key"))
+                                .foregroundStyle(.secondary)
+                        }
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(L10n.text("Fingerprint recognition", "指纹识别"))
+                        .accessibilityValue(model.hasAPIKey ? L10n.text("Configured", "已配置") : L10n.text("Key required", "需要配置 Key"))
+                        .accessibilityIdentifier("recognitionStatus")
+                        Link(L10n.text("Get an AcoustID application key", "获取 AcoustID 应用 Key"), destination: URL(string: "https://acoustid.org/new-application")!)
+                    } header: {
+                        Text("AcoustID")
+                    } footer: {
+                        Text(L10n.text("Use an application key, not a user key. Recognition sends only the audio fingerprint and duration. Your key is stored securely on this device. Manual editing and title search work without a key.", "请填写应用 Key，而非用户 Key。识别仅发送音频指纹和时长；Key 安全保存在此设备。未配置时仍可手动编辑和按歌名搜索。"))
+                    }
                 }
 
                 Section {
@@ -142,6 +168,7 @@ private struct LicenseView: View {
                 NavigationLink("utf8cpp · Boost Software License") { LicenseTextView(name: "utf8cpp") }
             }
             Section {
+                Link("ShazamKit", destination: URL(string: "https://developer.apple.com/shazamkit/")!)
                 Link("AcoustID", destination: URL(string: "https://acoustid.org/")!)
                 Link("MusicBrainz", destination: URL(string: "https://musicbrainz.org/")!)
                 Link("Cover Art Archive", destination: URL(string: "https://coverartarchive.org/")!)

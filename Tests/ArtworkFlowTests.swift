@@ -201,7 +201,8 @@ final class ArtworkFlowTests: XCTestCase {
         configuration.protocolClasses = [ArtworkFlowURLProtocol.self]
         let session = URLSession(configuration: configuration)
         let recognition = MusicRecognitionService(session: session, minimumMusicBrainzInterval: 0, minimumAcoustIDInterval: 0)
-        let model = AppModel(fileStore: store, recognition: recognition, coverArt: CoverArtService(session: session))
+        let model = AppModel(fileStore: store, recognition: recognition, coverArt: CoverArtService(session: session),
+                             recognitionProvider: .acoustID)
         model.documents = [document]
         return Context(root: root, source: source, originalBytes: try Data(contentsOf: source), document: document,
                        session: session, model: model)
@@ -449,7 +450,8 @@ final class BatchMatchingFlowTests: XCTestCase {
                                                    minimumAcoustIDInterval: 0, fingerprintProvider: { url in
             (url.deletingPathExtension().lastPathComponent, 120)
         })
-        let model = AppModel(fileStore: store, recognition: recognition, coverArt: CoverArtService(session: session))
+        let model = AppModel(fileStore: store, recognition: recognition, coverArt: CoverArtService(session: session),
+                             recognitionProvider: .acoustID)
         await model.load()
         model.apiKey = "fixture-key"
         installResponses(fixtures, cover: downloadedCover, onStalledCover: onStalledCover)

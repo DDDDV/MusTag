@@ -18,6 +18,13 @@ enum CoverArtUITestSupport {
         MetadataCandidate(id: "ui-cover-release", recordingID: recordingID,
                           releaseID: releaseID, tags: tags, detail: "Cover preview test edition")
     }
+
+    static func shazamResult() -> ShazamRecognitionResult {
+        ShazamRecognitionResult(id: "ui-shazam-song", title: "Shazam matched title",
+            artist: "Shazam matched artist", genres: ["Pop"], isrc: "USAAA2600001",
+            artworkURL: URL(string: "https://is1-ssl.mzstatic.com/ui-shazam-cover.png"),
+            appleMusicURL: URL(string: "https://music.apple.com/us/album/test/123?i=456"))
+    }
 }
 
 private final class CoverArtUITestProtocol: URLProtocol {
@@ -51,7 +58,8 @@ private final class CoverArtUITestProtocol: URLProtocol {
             data = Data("{\"id\":\"\(CoverArtUITestSupport.lowerReleaseID)\",\"title\":\"Different album\",\"media\":[]}".utf8)
         } else if url.host == "musicbrainz.org", url.path == "/ws/2/release/\(CoverArtUITestSupport.releaseID)" {
             data = Data("{\"id\":\"\(CoverArtUITestSupport.releaseID)\",\"title\":\"Test album\",\"media\":[]}".utf8)
-        } else if url.host == "coverartarchive.org", url.path == "/release/\(CoverArtUITestSupport.releaseID)/front-1200" {
+        } else if (url.host == "coverartarchive.org" && url.path == "/release/\(CoverArtUITestSupport.releaseID)/front-1200")
+                    || (url.host == "is1-ssl.mzstatic.com" && url.path == "/ui-shazam-cover.png") {
             let format = UIGraphicsImageRendererFormat()
             format.scale = 1
             data = UIGraphicsImageRenderer(size: CGSize(width: 300, height: 300), format: format).pngData { context in

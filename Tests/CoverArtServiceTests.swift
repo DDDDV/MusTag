@@ -236,6 +236,128 @@ final class CoverArtServiceTests: XCTestCase {
         XCTAssertFalse(preferred.contains("ia801234.us.archive.org"))
     }
 
+    func testShazamDownloadsReturnedArtworkURLWithoutCredentials() async throws {
+        let url = try XCTUnwrap(URL(string: "https://is1-ssl.mzstatic.com/image/thumb/Music/album/600x600bb.jpg"))
+        let image = try imageData()
+        var requests = 0
+        CoverArtURLProtocol.handler = { request in
+            requests += 1
+            XCTAssertEqual(request.url, url)
+            XCTAssertNil(request.httpBody)
+            XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
+            return .init(status: 200, headers: ["Content-Type": "image/jpeg"], data: image)
+        }
+        let artwork = try await service().shazamCover(url: url)
+        XCTAssertEqual(artwork?.data, image)
+        XCTAssertEqual(artwork?.mimeType, "image/png")
+        XCTAssertEqual(requests, 1)
+    }
+
+    func testShazamMissingArtworkDoesNotInventFallbackURL() async throws {
+        var requests = 0
+        CoverArtURLProtocol.handler = { _ in
+            requests += 1
+            return .init(status: 404, data: Data())
+        }
+        let url = try XCTUnwrap(URL(string: "https://is1-ssl.mzstatic.com/image/missing.jpg"))
+        let artwork = try await service().shazamCover(url: url)
+        XCTAssertNil(artwork)
+        XCTAssertEqual(requests, 1)
+    }
+
+    func testShazamRejectsUntrustedArtworkURLsBeforeNetworking() async throws {
+        CoverArtURLProtocol.handler = { _ in
+            XCTFail("Untrusted artwork URLs must fail before networking")
+            return .init(status: 200, data: Data())
+        }
+        for address in ["http://is1-ssl.mzstatic.com/image.jpg", "file:///tmp/image.jpg",
+                        "https://is1-ssl.mzstatic.com.evil.example/image.jpg",
+                        "https://user:secret@is1-ssl.mzstatic.com/image.jpg",
+                        "https://is1-ssl.mzstatic.com:444/image.jpg",
+                        "https://archive.org/image.jpg", "https://coverartarchive.org/image.jpg",
+                        "https://apple.com/image.jpg", "https://evil.example/image.jpg"] {
+            do {
+                _ = try await service().shazamCover(url: XCTUnwrap(URL(string: address)))
+                XCTFail("Expected rejected artwork URL: \(address)")
+            } catch {
+                XCTAssertTrue(error is MusTagError)
+                XCTAssertTrue(error.localizedDescription.contains("Shazam"))
+                XCTAssertFalse(error.localizedDescription.contains("secret"))
+            }
+        }
+    }
+
+    func testShazamAndArchiveRedirectsCannotCrossProviders() throws {
+        let appleURL = try XCTUnwrap(URL(string: "https://is1-ssl.mzstatic.com/image.jpg"))
+        let secondAppleURL = try XCTUnwrap(URL(string: "https://is2-ssl.mzstatic.com/redirected.jpg"))
+        let archiveURL = try XCTUnwrap(URL(string: "https://ia801234.us.archive.org/image.jpg"))
+        let shazam = CoverArtRedirectDelegate(initialURL: appleURL, provider: .shazam)
+        let archive = CoverArtRedirectDelegate(initialURL: archiveURL)
+        XCTAssertNotNil(shazam.allowedRedirect(URLRequest(url: secondAppleURL)))
+        XCTAssertEqual(shazam.lastAllowedHost, "is2-ssl.mzstatic.com")
+        XCTAssertNil(shazam.allowedRedirect(URLRequest(url: archiveURL)))
+        XCTAssertEqual(shazam.lastAllowedHost, "is2-ssl.mzstatic.com")
+        XCTAssertNil(archive.allowedRedirect(URLRequest(url: appleURL)))
+        XCTAssertEqual(archive.lastAllowedHost, "ia801234.us.archive.org")
+        let insecure = try XCTUnwrap(URL(string: "http://is2-ssl.mzstatic.com/image.jpg"))
+        XCTAssertNil(shazam.allowedRedirect(URLRequest(url: insecure)))
+    }
+
+    func testShazamHTTPErrorNamesCorrectProvider() async throws {
+        CoverArtURLProtocol.handler = { _ in .init(status: 503, data: Data()) }
+        let url = try XCTUnwrap(URL(string: "https://is1-ssl.mzstatic.com/image.jpg"))
+        do {
+            _ = try await service().shazamCover(url: url)
+            XCTFail("Server failures must not masquerade as missing covers")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("Shazam"))
+            XCTAssertTrue(error.localizedDescription.contains("503"))
+            XCTAssertFalse(error.localizedDescription.contains("Cover Art Archive"))
+        }
+    }
+
+    func testShazamArtworkStillRequiresValidImageBytesAndBoundedSize() async throws {
+        let url = try XCTUnwrap(URL(string: "https://is1-ssl.mzstatic.com/image.jpg"))
+        CoverArtURLProtocol.handler = { _ in
+            .init(status: 200, headers: ["Content-Type": "image/jpeg"], data: Data("<html>error</html>".utf8))
+        }
+        do {
+            _ = try await service().shazamCover(url: url)
+            XCTFail("Invalid image data must be rejected")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("Shazam")) }
+        CoverArtURLProtocol.handler = { _ in
+            .init(status: 200, headers: ["Content-Length": "9000000"], data: Data())
+        }
+        do {
+            _ = try await service().shazamCover(url: url)
+            XCTFail("Oversized artwork must be rejected")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("8 MB")) }
+    }
+
+    func testShazamTransportErrorsRetainTrustedHostWithoutExposingURLDetails() async throws {
+        let url = try XCTUnwrap(URL(string: "https://is1-ssl.mzstatic.com/private-path/image.jpg?token=secret"))
+        CoverArtURLProtocol.handler = { _ in
+            throw URLError(.timedOut, userInfo: [NSURLErrorFailingURLErrorKey: url])
+        }
+        do {
+            _ = try await service().shazamCover(url: url)
+            XCTFail("Expected transport error")
+        } catch {
+            let message = error.localizedDescription
+            XCTAssertTrue(message.contains("is1-ssl.mzstatic.com"))
+            XCTAssertTrue(message.contains("NSURLErrorDomain -1001"))
+            XCTAssertFalse(message.contains("private-path"))
+            XCTAssertFalse(message.contains("secret"))
+        }
+        let foreignURL = try XCTUnwrap(URL(string: "https://archive.org/private-path?token=secret"))
+        let error = URLError(.unknown, userInfo: [NSURLErrorFailingURLErrorKey: foreignURL])
+        let message = CoverArtService.downloadError(error, fallbackHost: "is1-ssl.mzstatic.com", provider: .shazam)
+            .localizedDescription
+        XCTAssertTrue(message.contains("is1-ssl.mzstatic.com"))
+        XCTAssertFalse(message.contains("archive.org"))
+        XCTAssertFalse(message.contains("secret"))
+    }
+
     private func assertDownloadFails(expectedText: String? = nil) async {
         do {
             _ = try await service().frontCover(releaseID: releaseID)

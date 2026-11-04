@@ -12,6 +12,13 @@ final class AppModel: ObservableObject {
     @Published var appliedCandidateIDs: [UUID: String] = [:]
     @Published var backupRecords: [BackupRecord] = []
     @Published var apiKey = APIKeyStore.load()
+    @Published var recognitionProvider: RecognitionProvider {
+        didSet {
+            if !Self.isUITesting {
+                preferences.set(recognitionProvider.rawValue, forKey: "recognitionProvider")
+            }
+        }
+    }
     @Published var operation: String?
     @Published var currentFile = ""
     @Published var completedCount = 0
@@ -22,6 +29,7 @@ final class AppModel: ObservableObject {
     private let fileStore: AudioFileStore
     private let recognition: MusicRecognitionService
     private let coverArt: CoverArtService
+    private let preferences: UserDefaults
     private var operationTask: Task<Void, Never>?
     private var persistenceTask: Task<Void, Never>?
     private var loaded = false
@@ -38,13 +46,26 @@ final class AppModel: ObservableObject {
 
     init(fileStore: AudioFileStore? = nil,
          recognition: MusicRecognitionService = MusicRecognitionService(),
-         coverArt: CoverArtService = CoverArtService()) {
+         coverArt: CoverArtService = CoverArtService(),
+         recognitionProvider: RecognitionProvider? = nil,
+         preferences: UserDefaults = .standard) {
+        self.preferences = preferences
+        self.recognitionProvider = recognitionProvider
+            ?? (Self.isUITesting ? nil : preferences.string(forKey: "recognitionProvider").flatMap(RecognitionProvider.init(rawValue:)))
+            ?? .shazamKit
         #if DEBUG
-        if Self.isUITesting && ProcessInfo.processInfo.arguments.contains("--ui-testing-auto-match") {
+        if Self.isUITesting && ProcessInfo.processInfo.arguments.contains("--ui-testing-shazam") {
+            let session = CoverArtUITestSupport.session()
+            self.recognition = MusicRecognitionService(session: session,
+                shazamProvider: { _ in [CoverArtUITestSupport.shazamResult()] })
+            self.coverArt = CoverArtService(session: session)
+            self.recognitionProvider = .shazamKit
+        } else if Self.isUITesting && ProcessInfo.processInfo.arguments.contains("--ui-testing-auto-match") {
             let session = CoverArtUITestSupport.session()
             self.recognition = MusicRecognitionService(session: session, minimumMusicBrainzInterval: 0,
                 minimumAcoustIDInterval: 0, fingerprintProvider: { _ in ("ui-test-fingerprint", 120) })
             self.coverArt = CoverArtService(session: session)
+            self.recognitionProvider = .acoustID
         } else if Self.isUITesting && ProcessInfo.processInfo.arguments.contains("--ui-testing-with-cover") {
             let session = CoverArtUITestSupport.session()
             self.recognition = MusicRecognitionService(session: session, minimumMusicBrainzInterval: 0)
@@ -76,6 +97,13 @@ final class AppModel: ObservableObject {
 
     var isWorking: Bool { operation != nil }
     var hasAPIKey: Bool { !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    var recognitionHint: String {
+        recognitionProvider == .shazamKit
+            ? L10n.text("ShazamKit · a unique match fills the draft; review before saving",
+                        "ShazamKit · 唯一匹配填入草稿，预览后保存")
+            : L10n.text("AcoustID · fixed 90% threshold; review drafts before saving",
+                        "AcoustID · 固定 90% 门槛，草稿预览后保存")
+    }
     var changedDocuments: [AudioDocument] { documents.filter(\.hasChanges) }
     var standaloneDocuments: [AudioDocument] {
         documents.filter { ($0.importFolderIDs ?? []).isEmpty }
@@ -143,7 +171,7 @@ final class AppModel: ObservableObject {
 
     func useCandidate(_ candidate: MetadataCandidate, for id: UUID) {
         guard !isWorking, let document = document(id) else { return }
-        begin(L10n.text("Loading release", "正在读取发行版本"), total: 1)
+        begin(L10n.text("Loading match", "正在读取匹配结果"), total: 1)
         currentFile = document.fileName
         operationTask = Task {
             defer { finish() }
@@ -158,7 +186,7 @@ final class AppModel: ObservableObject {
 
     /// Prepare the complete selection before changing the draft, so cancellation is atomic per file.
     private func applyCandidate(_ candidate: MetadataCandidate, to document: AudioDocument) async throws -> String? {
-        operation = L10n.text("Loading release", "正在读取发行版本")
+        operation = L10n.text("Loading match", "正在读取匹配结果")
         let resolved = try await recognition.resolve(candidate)
         var tags = document.draft
         for field in TagField.allCases {
@@ -171,22 +199,34 @@ final class AppModel: ObservableObject {
         // A newly selected release must never retain another release's pending cover.
         var artwork = document.originalArtwork
         var coverNotice: String?
-        if let releaseID = resolved.releaseID {
+        if resolved.source == .shazamKit || resolved.releaseID != nil {
             operation = L10n.text("Downloading cover", "正在下载封面")
             do {
-                if let downloaded = try await coverArt.frontCover(releaseID: releaseID) {
+                let downloaded: AudioArtwork?
+                if resolved.source == .shazamKit {
+                    if let url = resolved.artworkURL {
+                        downloaded = try await coverArt.shazamCover(url: url)
+                    } else {
+                        downloaded = nil
+                    }
+                } else if let releaseID = resolved.releaseID {
+                    downloaded = try await coverArt.frontCover(releaseID: releaseID)
+                } else {
+                    downloaded = nil
+                }
+                if let downloaded {
                     artwork = downloaded
                 } else {
                     coverNotice = L10n.text(
-                        "This release has no front cover. Tags were added to the draft; the original cover was kept.",
-                        "此发行版本暂无正面封面。文字标签已填入草稿，原封面保持不变。")
+                        "This match has no cover. Tags were added to the draft; the original cover was kept.",
+                        "此匹配暂无封面。文字标签已填入草稿，原封面保持不变。")
                 }
             } catch is CancellationError { throw CancellationError() }
             catch {
                 try Task.checkCancellation()
                 coverNotice = L10n.text(
-                    "Cover download failed. Tags were added to the draft; the original cover was kept. Select the release again to retry.\n",
-                    "封面下载失败。文字标签已填入草稿，原封面保持不变。可再次选择此版本重试。\n") + error.localizedDescription
+                    "Cover download failed. Tags were added to the draft; the original cover was kept. Select the match again to retry.\n",
+                    "封面下载失败。文字标签已填入草稿，原封面保持不变。可再次选择此匹配重试。\n") + error.localizedDescription
             }
         } else {
             coverNotice = L10n.text("This match has no release to look up a cover. The original cover was kept.",
@@ -196,6 +236,10 @@ final class AppModel: ObservableObject {
         if let index = documents.firstIndex(where: { $0.id == document.id }) {
             documents[index].draft = tags
             documents[index].draftArtwork = artwork
+            if resolved.source == .shazamKit {
+                documents[index].draftShazamAttribution = ShazamAttribution(
+                    title: resolved.tags.title, artist: resolved.tags.artist, appleMusicURL: resolved.appleMusicURL)
+            }
             documents[index].error = coverNotice
             appliedCandidateIDs[document.id] = candidate.id
         }
@@ -206,6 +250,7 @@ final class AppModel: ObservableObject {
         guard !isWorking, let index = documents.firstIndex(where: { $0.id == id }) else { return }
         documents[index].draft = documents[index].original
         documents[index].draftArtwork = documents[index].originalArtwork
+        documents[index].draftShazamAttribution = documents[index].originalShazamAttribution
         documents[index].error = nil
         appliedCandidateIDs.removeValue(forKey: id)
         schedulePersistence()
@@ -269,6 +314,10 @@ final class AppModel: ObservableObject {
                         refreshed.id = existing.id
                         // Refreshing a file directly must keep its imported folder membership.
                         refreshed.importFolderIDs = (existing.importFolderIDs ?? []).union(incoming.importFolderIDs ?? [])
+                        if refreshed.sourceHash == existing.sourceHash {
+                            refreshed.originalShazamAttribution = existing.originalShazamAttribution
+                            refreshed.draftShazamAttribution = existing.draftShazamAttribution
+                        }
                         if existing.hasChanges {
                             // Rebase only edited fields; preserve unrelated changes made by another app.
                             var draft = incoming.original
@@ -277,6 +326,7 @@ final class AppModel: ObservableObject {
                             }
                             refreshed.draft = draft
                             if existing.hasArtworkChanges { refreshed.draftArtwork = existing.draftArtwork }
+                            refreshed.draftShazamAttribution = existing.draftShazamAttribution
                             refreshedDrafts += 1
                         }
                         documents[index] = refreshed
@@ -300,11 +350,12 @@ final class AppModel: ObservableObject {
 
     func identify(_ ids: Set<UUID>, automaticallyApply: Bool = false) {
         guard !isWorking else { return }
-        guard hasAPIKey else { showsSettings = true; return }
+        guard recognitionProvider != .acoustID || hasAPIKey else { showsSettings = true; return }
         let items = documents.filter { ids.contains($0.id) }
         guard !items.isEmpty else { return }
         begin(L10n.text("Identifying", "正在识别"), total: items.count)
         let key = apiKey
+        let provider = recognitionProvider
         operationTask = Task {
             defer { finish() }
             var failures: [String] = []
@@ -322,7 +373,7 @@ final class AppModel: ObservableObject {
                     let url = try accessibleURL(for: item)
                     let scoped = url.startAccessingSecurityScopedResource()
                     defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-                    let matches = try await recognition.identify(url: url, apiKey: key)
+                    let matches = try await recognition.identify(url: url, apiKey: key, provider: provider)
                     try Task.checkCancellation()
                     candidates[item.id] = matches
                     if automaticallyApply {
@@ -337,8 +388,11 @@ final class AppModel: ObservableObject {
                                                "最高相似度低于 90%，请手动选择匹配；已有草稿保持不变。"), for: item.id)
                         case .ambiguous:
                             pending += 1
-                            setError(L10n.text("Several matches share the highest similarity. Choose a release manually; your draft was kept.",
-                                               "存在多个最高相似度版本，请手动选择；已有草稿保持不变。"), for: item.id)
+                            setError(provider == .shazamKit
+                                ? L10n.text("Shazam returned several matches. Choose one manually; your draft was kept.",
+                                            "Shazam 返回了多个匹配，请手动选择；已有草稿保持不变。")
+                                : L10n.text("Several matches share the highest similarity. Choose a release manually; your draft was kept.",
+                                            "存在多个最高相似度版本，请手动选择；已有草稿保持不变。"), for: item.id)
                         case .noMatch:
                             unmatched += 1
                             setError(L10n.text("No match found. Try a title search or edit manually.",

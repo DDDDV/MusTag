@@ -17,8 +17,10 @@
 - 旧版本没有记录导入来源，原有条目会保留在“文件”分类；重新选择对应文件夹后即可归入文件夹，已有草稿会保留。
 - **批量移除**：点击“选择”，勾选文件或“全选”，再点击底部“从列表移除”并确认。仅移除所选文件的列表记录和未保存的修改，原始音频和已保存的备份会保留；空文件夹入口也会保留。
 - **手动编辑**：点开文件修改歌名、艺术家、专辑、专辑艺术家、日期、曲序、碟号或流派。
-- **自动匹配**：设置中填入自己的 AcoustID **Application API Key**，点击“自动匹配”处理所选文件、当前文件夹或全部资料库。候选按指纹相似度从高到低排列，自动采用最高分且达到 **90%** 的结果；门槛固定，不提供调整。未配置 Key 时仍可编辑标签，并按歌名/艺术家搜索 MusicBrainz。
-- **版本选择**：最高分并列时，优先采用与原文件专辑名称一致的唯一候选；仍无法区分、低于 90% 或未匹配的文件保留原草稿，提示手动处理。同一录音的多个发行版本共用指纹分数，分数不能区分专辑版本，也不代表识别正确率。编辑页展示相似度和已采用标记，可手动改选（包括低于 90% 的候选）。歌名搜索结果需手动选择。
+- **识别服务**：默认使用 **ShazamKit**，无需填写 API Key；设置中可切换为 AcoustID，选择会保存在设备上。两种方式都支持所选文件、当前文件夹和全部资料库，不会在服务失败时自动切换到另一家。
+- **Shazam 自动匹配**：直接读取文件生成音频签名，不使用麦克风。唯一匹配将歌名、艺术家、流派及可用封面填入草稿；多条匹配需手选，未匹配保留原草稿。不显示或伪造 AcoustID 相似度，不套用 90% 门槛。基础识别结果没有专辑版本、专辑艺术家、年份、曲序及碟号，这些原有字段会保留，可按歌名搜索 MusicBrainz 再选择发行版本。
+- **AcoustID 自动匹配**：设置中填入自己的 **Application API Key** 后使用。候选按指纹相似度从高到低排列，自动采用最高分且达到 **90%** 的结果；门槛固定。未配置 Key 时仍可用 ShazamKit、手动编辑及歌名搜索。
+- **AcoustID 版本选择**：最高分并列时，优先采用与原文件专辑名称一致的唯一候选；仍无法区分、低于 90% 或未匹配的文件保留原草稿，提示手动处理。同一录音的多个发行版本共用指纹分数，分数不能区分专辑版本，也不代表识别正确率。编辑页展示相似度和已采用标记，可手动改选（包括低于 90% 的候选）。歌名搜索结果需手动选择。
 - **批量草稿**：自动匹配将文字标签和对应正面封面填入草稿，非空字段更新现有内容，空缺字段保留原值。每完成一个文件便保存草稿，单个文件失败后继续处理其他文件；结束时汇总已填入、待确认、未匹配及失败数量。点击“停止”保留已完成的草稿，正在处理和未处理的文件保持此前草稿。
 - **封面**：列表和编辑页显示文件内嵌封面；点击封面可放大预览。下载失败或版本无封面时保留原封面，重新选择版本可重试；也可以单独撤销封面修改。
 - **保存**：打开修改预览，核对文字差异和新旧封面对比，确认后写回原文件。仅更换封面也可以保存。每次写入前保留完整原文件备份。
@@ -39,11 +41,17 @@ AcoustID Key 在 https://acoustid.org/new-application 注册应用后获取。�
 
 ## 识别服务
 
-端侧使用 AVFoundation 解码、Chromaprint 计算真实指纹，向 AcoustID 仅上传指纹与时长。MusicBrainz 提供文字元数据及发行版本候选。歌名搜索会发送填写的歌名与艺术家。
+ShazamKit 使用系统框架，不新增第三方依赖。AVFoundation 分块解码开头最多三个片段，每段通常最多 12 秒，并遵守 Shazam 曲库的查询时长限制；只向 Apple 发送不可逆音频签名。未命中时尝试下一段，命中后停止；每次匹配最多等待 30 秒，可以取消。没有麦克风权限、Apple Music 播放授权或写入 Shazam 历史的请求。
+
+首次真实识别前，需要在 [Apple Developer → Certificates, Identifiers & Profiles](https://developer.apple.com/help/account/services/shazamkit/) 中为实际使用的 App ID 启用 **App Services → ShazamKit**，并用对应开发团队签名。工程已链接系统 ShazamKit.framework，但代码和模拟测试无法替代账户侧服务启用。项目保留现有 Bundle Identifier/签名团队；若使用自己的团队，请同步修改 App ID 和签名配置。
+
+Shazam 返回的标识与 MusicBrainz recording/release UUID 分开存储，不会自动送往 MusicBrainz 或 Cover Art Archive。封面仅接受返回的 HTTPS `mzstatic.com` 及其子域链接；缺失、格式不支持、超限或下载失败时保留原封面。候选和已采用内容显示 Apple Music 链接（返回链接时）；最近采用的 Shazam 识别记录随草稿、保存和备份恢复持久化，重启后仍可查看。后续手工编辑或 MusicBrainz 选择可能只保留部分 Shazam 字段，因此这条记录不表示当前全部标签均来自 Shazam。此分支用于技术验证，接入和测试并不解决“元数据/封面永久写入用户文件”的许可范围问题，上线前仍需确认。
+
+选择 AcoustID 时，端侧使用 AVFoundation 解码、Chromaprint 计算真实指纹，向 AcoustID 仅上传指纹与时长。MusicBrainz 提供文字元数据及发行版本候选。歌名搜索会发送填写的歌名与艺术家。
 
 选择发行版本后，向 Cover Art Archive 请求该版本的正面封面，并跟随 HTTPS 跳转从 Internet Archive 下载；不向封面服务发送音频、指纹或 AcoustID Key。优先请求 1200px 缩略图，缺失时尝试同一版本原图，不使用其他发行版本代替。支持 JPEG/PNG，单张最多 8 MiB、4000 万像素。未确认保存的封面随草稿保留，下载或取消操作不会改动原文件。
 
-这是个人验证配置。公共 MusicBrainz 请求限制为至少 1.05 秒间隔，AcoustID 至少 0.35 秒间隔。商业上线前确认服务商使用条件，并在 Info.plist 配置 `MusicBrainzContact` 为项目的真实联系邮箱或网站。当前没有配置 API Key，因此交付验证不包含真实 AcoustID 在线命中率。
+这是个人验证配置。公共 MusicBrainz 请求限制为至少 1.05 秒间隔，AcoustID 至少 0.35 秒间隔。商业上线前确认服务商使用条件，并在 Info.plist 配置 `MusicBrainzContact` 为项目的真实联系邮箱或网站。当前自动化测试使用固定匹配响应，不代表 ShazamKit 或 AcoustID 的真实在线命中率。
 
 ## 测试
 
@@ -74,6 +82,15 @@ xcodebuild -project MusTag.xcodeproj -scheme MusTag \
 - AcoustID 在线匹配尚未验证（未提供 API Key）；iCloud/NAS 的实际远端同步和各设备兼容性需要真机验证。
 
 界面截图：[文件列表](outputs/01-library-ios18.png)、[标签编辑](outputs/02-editor-ios18.png)、[修改预览](outputs/03-review-ios18.png)、[封面对比预览](outputs/04-cover-review-ios18.png)。截图使用本地生成的真实测试音频；封面流程截图使用隔离的固定网络响应和测试图片。
+
+### ShazamKit 接入验证（2026-11-04）
+
+- iPhone 16 Pro / iOS 18.6：119 项核心测试全部通过；新增签名转换、匹配超时/取消、Shazam 草稿及来源持久化、封面域隔离等测试。
+- 14 项 UI 用例首轮 13 项通过；修复候选行空白区域无法点击后，封面选择/保存/恢复、AcoustID 自动匹配及 Shazam 无 Key 识别三条相关流程复测全部通过。
+- 通用 iPhone Release 构建通过（未签名）；保留原 Bundle Identifier 和开发团队。
+- 已在开发者团队 `947X8JA62C` 下注册明确的 App ID `app.mustag.personal`，启用 ShazamKit App Service，并重新打开后台记录确认保存成功。
+- 测试使用真实本地音频与固定服务响应，不发送实际识别请求。服务启用后的真机联网识别及真实返回的封面链接尚未验证。
+- 日志：`work/shazam-core-test.log`、`work/shazam-ui-test.log`、`work/shazam-ui-final-test.log`、`work/shazam-device-build.log`。
 
 ## 目录
 
