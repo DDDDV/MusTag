@@ -13,6 +13,10 @@ final class MusTagUITests: XCTestCase {
     func testEmptyLibraryOffersFilesAndFolderImport() {
         let welcome = app.descendants(matching: .any).matching(identifier: "welcomeScreen").firstMatch
         XCTAssertTrue(welcome.waitForExistence(timeout: 8))
+        let brand = app.descendants(matching: .any).matching(identifier: "welcomeBrandLabel").firstMatch
+        XCTAssertTrue(brand.exists)
+        XCTAssertEqual(brand.label, "MusTag")
+        capture("welcome-brand-header")
         let add = app.buttons["addAudioButton"].firstMatch
         XCTAssertTrue(add.waitForExistence(timeout: 8))
         XCTAssertFalse(app.buttons["reviewButton"].exists)

@@ -94,25 +94,18 @@ private struct LibraryContentsView: View {
         .navigationTitle(showsWelcome ? "" : folder?.name ?? "MusTag")
         .navigationBarTitleDisplayMode(showsWelcome ? .inline : .large)
         .toolbar {
-            ToolbarItem(placement: folder == nil ? .topBarLeading : .topBarTrailing) {
-                if showsWelcome {
-                    HStack(spacing: 8) {
-                        Image(systemName: "tag.fill")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(.indigo)
-                            .accessibilityHidden(true)
-                        Text("MusTag")
-                            .font(.system(.title3, design: .rounded).weight(.bold))
-                            .foregroundStyle(.primary)
+            if showsWelcome {
+                welcomeBrandItem
+            } else {
+                ToolbarItem(placement: folder == nil ? .topBarLeading : .topBarTrailing) {
+                    if !scopeDocuments.isEmpty {
+                        Button(selecting ? L10n.text("Done", "完成") : L10n.text("Select", "选择")) {
+                            selecting.toggle()
+                            selected = []
+                        }
+                        .disabled(model.isWorking)
+                        .accessibilityIdentifier("librarySelectButton")
                     }
-                    .accessibilityAddTraits(.isHeader)
-                } else if !scopeDocuments.isEmpty {
-                    Button(selecting ? L10n.text("Done", "完成") : L10n.text("Select", "选择")) {
-                        selecting.toggle()
-                        selected = []
-                    }
-                    .disabled(model.isWorking)
-                    .accessibilityIdentifier("librarySelectButton")
                 }
             }
             ToolbarItemGroup(placement: .topBarTrailing) {
@@ -165,6 +158,36 @@ private struct LibraryContentsView: View {
                 "这些文件将从 MusTag 列表移除，尚未保存的修改将丢弃。原始音频文件和已保存的备份会保留。"
             ))
         }
+    }
+
+    @ToolbarContentBuilder
+    private var welcomeBrandItem: some ToolbarContent {
+        if #available(iOS 26.0, *) {
+            ToolbarItem(placement: .topBarLeading) { welcomeBrand }
+                .sharedBackgroundVisibility(.hidden)
+        } else {
+            ToolbarItem(placement: .topBarLeading) { welcomeBrand }
+        }
+    }
+
+    private var welcomeBrand: some View {
+        // Keep the wordmark visible when the navigation bar adapts toolbar labels.
+        Label {
+            Text("MusTag")
+                .font(.system(.title3, design: .rounded).weight(.bold))
+                .foregroundStyle(.primary)
+        } icon: {
+            Image(systemName: "tag.fill")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(.indigo)
+        }
+        .labelStyle(.titleAndIcon)
+        .fixedSize(horizontal: true, vertical: false)
+        .lineLimit(1)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("MusTag")
+        .accessibilityAddTraits(.isHeader)
+        .accessibilityIdentifier("welcomeBrandLabel")
     }
 
     @ViewBuilder
