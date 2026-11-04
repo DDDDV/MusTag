@@ -90,6 +90,10 @@ enum MetadataSource: Sendable {
     case acoustID, shazamKit
 }
 
+enum CandidateReleaseChoice: Sendable {
+    case keepOriginal, appleMusic
+}
+
 struct MetadataCandidate: Identifiable, Sendable {
     var id: String
     var tags: AudioTags
@@ -104,6 +108,17 @@ struct MetadataCandidate: Identifiable, Sendable {
     var shazamMetadata: ShazamRecognitionResult? = nil
     var appleMusicMetadata: AppleMusicSongMetadata? = nil
     var supplementationNotice: String? = nil
+
+    func hasAlbumConflict(with originalAlbum: String) -> Bool {
+        guard source == .shazamKit, appleMusicMetadata != nil else { return false }
+        func normalized(_ album: String) -> String {
+            album.precomposedStringWithCanonicalMapping.split(whereSeparator: \.isWhitespace)
+                .joined(separator: " ").lowercased()
+        }
+        let original = normalized(originalAlbum)
+        let proposed = normalized(tags.album)
+        return !original.isEmpty && !proposed.isEmpty && original != proposed
+    }
 }
 
 struct BackupRecord: Identifiable, Codable, Sendable {

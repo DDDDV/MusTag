@@ -357,6 +357,8 @@ final class MusTagUITests: XCTestCase {
             format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "metadataCandidate_", "Test album")).firstMatch
         for _ in 0..<7 where !candidate.isHittable { app.swipeUp() }
         XCTAssertTrue(candidate.isHittable)
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "metadataCandidate_")).count, 1,
+                       "The Shazam match and its Apple Music details must share one candidate")
         XCTAssertTrue(candidate.isSelected)
         XCTAssertTrue(candidate.label.contains("Apple Music"))
         XCTAssertTrue(candidate.label.contains("Year 1998"))
@@ -366,6 +368,8 @@ final class MusTagUITests: XCTestCase {
         let appleMusicLink = app.descendants(matching: .any)
             .matching(NSPredicate(format: "identifier BEGINSWITH %@", "appleMusicLink_")).firstMatch
         XCTAssertTrue(appleMusicLink.exists)
+        XCTAssertEqual(app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "appleMusicLink_")).count, 1)
         XCTAssertEqual(candidate.descendants(matching: .any)
             .matching(NSPredicate(format: "identifier BEGINSWITH %@", "appleMusicLink_")).count, 0,
             "The Apple Music link must be separate from applying a candidate")
@@ -376,6 +380,57 @@ final class MusTagUITests: XCTestCase {
         let trackReview = app.buttons["trackReviewButton"]
         expectation(for: NSPredicate(format: "exists == true AND enabled == false"), evaluatedWith: trackReview)
         waitForExpectations(timeout: 15)
+    }
+
+    func testShazamAlbumConflictHasOneCandidateAndCanRestoreOriginalAlbumInformation() {
+        app.terminate()
+        app.launchArguments += ["--ui-testing-with-audio", "--ui-testing-shazam", "--ui-testing-shazam-album-conflict"]
+        app.launch()
+        let audio = app.buttons["audioRow_UI Test.m4a"]
+        XCTAssertTrue(audio.waitForExistence(timeout: 10))
+        app.buttons["identifyButton"].tap()
+        let notice = app.alerts["Notice"]
+        XCTAssertTrue(notice.waitForExistence(timeout: 15))
+        notice.buttons["OK"].tap()
+        audio.tap()
+        XCTAssertTrue(app.navigationBars["Edit tags"].waitForExistence(timeout: 5))
+        assertEditorTags([("album", "Test album"), ("year", ""), ("trackNumber", ""), ("discNumber", "")])
+
+        let candidateID = "shazam:appleMusic:456"
+        let candidate = app.descendants(matching: .any).matching(identifier: "metadataCandidate_\(candidateID)").firstMatch
+        let useAppleMusic = app.buttons["useAppleMusicAlbum_\(candidateID)"]
+        let keepOriginal = app.buttons["keepOriginalAlbum_\(candidateID)"]
+        for _ in 0..<8 where !useAppleMusic.isHittable { app.swipeUp() }
+        XCTAssertTrue(useAppleMusic.isHittable)
+        XCTAssertTrue(keepOriginal.exists)
+        XCTAssertEqual(app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "metadataCandidate_")).count, 1)
+        XCTAssertTrue(candidate.label.contains("Original album: Test album"))
+        XCTAssertTrue(candidate.label.contains("Apple Music album: Different catalog album"))
+        XCTAssertTrue(candidate.label.contains("choose album information"))
+        XCTAssertFalse(useAppleMusic.isSelected)
+        XCTAssertFalse(keepOriginal.isSelected)
+        XCTAssertEqual(app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "appleMusicLink_")).count, 1)
+        capture("12-shazam-album-conflict")
+
+        useAppleMusic.tap()
+        expectation(for: NSPredicate(format: "selected == true"), evaluatedWith: useAppleMusic)
+        waitForExpectations(timeout: 15)
+        XCTAssertFalse(keepOriginal.isSelected)
+        assertEditorTags([("album", "Different catalog album"), ("albumArtist", "Album artist"),
+                          ("year", "1998"), ("trackNumber", "7"), ("discNumber", "2")])
+
+        for _ in 0..<8 where !keepOriginal.isHittable { app.swipeUp() }
+        XCTAssertTrue(keepOriginal.isHittable)
+        keepOriginal.tap()
+        expectation(for: NSPredicate(format: "selected == true"), evaluatedWith: keepOriginal)
+        waitForExpectations(timeout: 15)
+        XCTAssertFalse(useAppleMusic.isSelected)
+        XCTAssertTrue(candidate.label.contains("Original album information kept"))
+        assertEditorTags([("title", "Shazam matched title"), ("album", "Test album"), ("albumArtist", ""),
+                          ("year", ""), ("trackNumber", ""), ("discNumber", "")])
+        XCTAssertTrue(app.buttons["trackReviewButton"].isEnabled, "Both choices must remain draft changes until review and save")
     }
 
     func testAutomaticMatchingRanksCandidatesAndKeepsDraftUntilReviewSave() {
@@ -507,6 +562,23 @@ final class MusTagUITests: XCTestCase {
         title.typeText(prefix)
         app.navigationBars["Edit tags"].buttons.element(boundBy: 0).tap()
         XCTAssertTrue(audio.waitForExistence(timeout: 3))
+    }
+
+    private func assertEditorTags(_ values: [(String, String)], file: StaticString = #filePath, line: UInt = #line) {
+        let title = app.descendants(matching: .any).matching(identifier: "tag_title").firstMatch
+        for _ in 0..<8 where !title.isHittable { app.swipeDown() }
+        for (field, expected) in values {
+            let input = app.descendants(matching: .any).matching(identifier: "tag_\(field)").firstMatch
+            for _ in 0..<6 where !input.isHittable { app.swipeUp() }
+            XCTAssertTrue(input.exists, field, file: file, line: line)
+            let value = input.value as? String ?? ""
+            if expected.isEmpty {
+                // Empty text fields may expose their placeholder as the accessibility value.
+                XCTAssertTrue(value.isEmpty || value == input.label, "\(field): \(value)", file: file, line: line)
+            } else {
+                XCTAssertEqual(value, expected, field, file: file, line: line)
+            }
+        }
     }
 
     private func capture(_ name: String) {

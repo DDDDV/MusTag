@@ -133,7 +133,6 @@ actor MusicRecognitionService {
                 return [fallback]
             }
             var candidate = base
-            candidate.id = "\(base.id):appleMusic:\(id)"
             candidate.tags = Self.fillingMissing(base.tags, with: tags)
             candidate.appleMusicMetadata = song
             candidate.duration = song.duration.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
@@ -149,10 +148,7 @@ actor MusicRecognitionService {
                     "Some Apple Music fields are missing. Available details were added; missing fields retain their existing values.",
                     "Apple Music 部分字段缺失。已补充可用详情，缺失字段保留原值。")
             }
-            fallback.supplementationNotice = L10n.text(
-                "An Apple Music edition is available. If its album differs from your file, select that edition manually after reviewing it.",
-                "已找到 Apple Music 发行版本。若专辑与文件原值不同，请核对后手动选择该版本。")
-            return [fallback, candidate]
+            return [candidate]
         } catch is CancellationError {
             throw CancellationError()
         } catch let error as URLError where error.code == .cancelled {
@@ -196,7 +192,11 @@ actor MusicRecognitionService {
     private static func shazamCandidate(_ match: ShazamRecognitionResult) -> MetadataCandidate? {
         let title = match.title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty, !match.id.isEmpty else { return nil }
-        return MetadataCandidate(id: "shazam:\(match.id)",
+        // A catalog song is one choice even when Shazam returns multiple identifiers
+        // for it. Keep this identity unchanged if catalog supplementation is unavailable.
+        let id = AppleMusicMetadataService.normalizedID(match.appleMusicID)
+            .map { "shazam:appleMusic:\($0)" } ?? "shazam:\(match.id)"
+        return MetadataCandidate(id: id,
             tags: AudioTags(title: title, artist: match.artist, genre: GenreLocalization.localized(match.genres)),
             detail: L10n.text("Shazam · basic song information", "Shazam · 歌曲基础信息"), source: .shazamKit,
             artworkURL: match.artworkURL, appleMusicURL: validatedAppleMusicURL(match.appleMusicURL),
@@ -217,21 +217,13 @@ actor MusicRecognitionService {
         return result
     }
 
-    static func automaticMatch(from candidates: [MetadataCandidate], originalAlbum: String) -> AutomaticMatchDecision {
+    static func automaticMatch(from candidates: [MetadataCandidate]) -> AutomaticMatchDecision {
         let matches = uniqueCandidates(candidates)
         guard !matches.isEmpty else { return .noMatch }
         if matches.contains(where: { $0.source == .shazamKit }) {
             guard matches.allSatisfy({ $0.source == .shazamKit }) else { return .ambiguous }
             if matches.count == 1, let match = matches.first, !match.tags.title.isEmpty { return .selected(match) }
-            let identities = Set(matches.map { $0.shazamMetadata?.id ?? $0.id })
-            guard identities.count == 1,
-                  let base = matches.first(where: { $0.appleMusicMetadata == nil }), !base.tags.title.isEmpty else { return .ambiguous }
-            let editions = matches.filter { $0.appleMusicMetadata != nil }
-            if editions.count == 1, let edition = editions.first {
-                let album = normalizedAlbum(originalAlbum)
-                if album.isEmpty || album == normalizedAlbum(edition.tags.album) { return .selected(edition) }
-            }
-            return .selected(base)
+            return .ambiguous
         }
         let ranked = rankedCandidates(candidates)
         guard let first = ranked.first, let highestScore = validFingerprintScore(first.score) else { return .noMatch }
@@ -258,13 +250,18 @@ actor MusicRecognitionService {
         return score
     }
 
-    private static func normalizedAlbum(_ album: String) -> String {
-        album.precomposedStringWithCanonicalMapping.split(whereSeparator: \.isWhitespace).joined(separator: " ").lowercased()
-    }
-
     private static func uniqueCandidates(_ candidates: [MetadataCandidate]) -> [MetadataCandidate] {
         var seen: Set<String> = []
-        return candidates.filter { seen.insert($0.id).inserted }
+        return candidates.filter { candidate in
+            let id: String
+            if candidate.source == .shazamKit,
+               let catalogID = AppleMusicMetadataService.normalizedID(candidate.shazamMetadata?.appleMusicID) {
+                id = "shazam:appleMusic:\(catalogID)"
+            } else {
+                id = candidate.id
+            }
+            return seen.insert(id).inserted
+        }
     }
 
     private func waitForSlot() async throws {

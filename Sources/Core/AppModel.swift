@@ -10,6 +10,7 @@ final class AppModel: ObservableObject {
     @Published var folders: [AudioFolder] = []
     @Published var candidates: [UUID: [MetadataCandidate]] = [:]
     @Published var appliedCandidateIDs: [UUID: String] = [:]
+    @Published var appliedReleaseChoices: [UUID: CandidateReleaseChoice] = [:]
     @Published var backupRecords: [BackupRecord] = []
     @Published var apiKey = APIKeyStore.load()
     @Published var recognitionProvider: RecognitionProvider {
@@ -56,9 +57,14 @@ final class AppModel: ObservableObject {
         #if DEBUG
         if Self.isUITesting && ProcessInfo.processInfo.arguments.contains("--ui-testing-shazam") {
             let session = CoverArtUITestSupport.session()
+            let hasAlbumConflict = ProcessInfo.processInfo.arguments.contains("--ui-testing-shazam-album-conflict")
             self.recognition = MusicRecognitionService(session: session,
                 shazamProvider: { _ in [CoverArtUITestSupport.shazamResult()] },
-                appleMusicProvider: { _ in CoverArtUITestSupport.appleMusicSong() })
+                appleMusicProvider: { _ in
+                    var song = CoverArtUITestSupport.appleMusicSong()
+                    if hasAlbumConflict { song.albumTitle = "Different catalog album" }
+                    return song
+                })
             self.coverArt = CoverArtService(session: session)
             self.recognitionProvider = .shazamKit
         } else if Self.isUITesting && ProcessInfo.processInfo.arguments.contains("--ui-testing-auto-match") {
@@ -166,31 +172,47 @@ final class AppModel: ObservableObject {
         documents[index].draft = tags
         documents[index].error = nil
         appliedCandidateIDs.removeValue(forKey: id)
+        appliedReleaseChoices.removeValue(forKey: id)
         schedulePersistence()
     }
 
-    func useCandidate(_ candidate: MetadataCandidate, for id: UUID) {
+    func useCandidate(_ candidate: MetadataCandidate, for id: UUID,
+                      releaseChoice: CandidateReleaseChoice? = nil) {
         guard !isWorking, let document = document(id) else { return }
         begin(L10n.text("Loading match", "正在读取匹配结果"), total: 1)
         currentFile = document.fileName
         operationTask = Task {
             defer { finish() }
             do {
-                notice = try await applyCandidate(candidate, to: document)
+                notice = try await applyCandidate(candidate, to: document, releaseChoice: releaseChoice)
                 completedCount = 1
-                await persistNow()
             } catch is CancellationError { }
             catch { notice = error.localizedDescription }
+            // begin() cancels the debounce for earlier manual edits. Keep those
+            // edits durable even if loading this candidate fails or is cancelled.
+            await persistNow()
         }
     }
 
     /// Prepare the complete selection before changing the draft, so cancellation is atomic per file.
-    private func applyCandidate(_ candidate: MetadataCandidate, to document: AudioDocument) async throws -> String? {
+    private func applyCandidate(_ candidate: MetadataCandidate, to document: AudioDocument,
+                                releaseChoice: CandidateReleaseChoice? = nil) async throws -> String? {
         operation = L10n.text("Loading match", "正在读取匹配结果")
         try Task.checkCancellation()
         let resolved = candidate
+        let hasCatalog = resolved.source == .shazamKit && resolved.appleMusicMetadata != nil
+        let choice: CandidateReleaseChoice? = hasCatalog
+            ? (releaseChoice ?? (resolved.hasAlbumConflict(with: document.original.album) ? nil : .appleMusic))
+            : nil
+        let releaseFields: Set<TagField> = [.album, .albumArtist, .year, .trackNumber, .discNumber]
         var tags = document.draft
         for field in TagField.allCases {
+            if hasCatalog && releaseFields.contains(field) && choice != .appleMusic {
+                // An explicit choice restores even empty original fields. Pending choices
+                // leave manual draft edits intact until the user decides on the album.
+                if choice == .keepOriginal { field.set(field.value(in: document.original), in: &tags) }
+                continue
+            }
             let proposed = field.value(in: resolved.tags)
             // Empty provider fields never erase existing user metadata.
             if !proposed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -199,8 +221,9 @@ final class AppModel: ObservableObject {
         }
         // A newly selected release must never retain another release's pending cover.
         var artwork = document.originalArtwork
+        if hasCatalog && choice == nil { artwork = document.draftArtwork }
         var coverNotice: String?
-        if resolved.source == .shazamKit {
+        if resolved.source == .shazamKit && (!hasCatalog || choice == .appleMusic) {
             operation = L10n.text("Downloading cover", "正在下载封面")
             do {
                 let downloaded: AudioArtwork?
@@ -225,7 +248,8 @@ final class AppModel: ObservableObject {
             }
         }
         try Task.checkCancellation()
-        let notices = [resolved.supplementationNotice, coverNotice].compactMap { $0 }
+        let supplementationNotice = hasCatalog && choice != .appleMusic ? nil : resolved.supplementationNotice
+        let notices = [supplementationNotice, coverNotice].compactMap { $0 }
         let selectionNotice = notices.isEmpty ? nil : notices.joined(separator: "\n")
         if let index = documents.firstIndex(where: { $0.id == document.id }) {
             documents[index].draft = tags
@@ -237,6 +261,7 @@ final class AppModel: ObservableObject {
             }
             documents[index].error = selectionNotice
             appliedCandidateIDs[document.id] = candidate.id
+            appliedReleaseChoices[document.id] = choice
         }
         return selectionNotice
     }
@@ -248,6 +273,7 @@ final class AppModel: ObservableObject {
         documents[index].draftShazamAttribution = documents[index].originalShazamAttribution
         documents[index].error = nil
         appliedCandidateIDs.removeValue(forKey: id)
+        appliedReleaseChoices.removeValue(forKey: id)
         schedulePersistence()
     }
 
@@ -263,6 +289,7 @@ final class AppModel: ObservableObject {
         ids.forEach {
             candidates.removeValue(forKey: $0)
             appliedCandidateIDs.removeValue(forKey: $0)
+            appliedReleaseChoices.removeValue(forKey: $0)
         }
         schedulePersistence()
     }
@@ -277,6 +304,7 @@ final class AppModel: ObservableObject {
         removedIDs.forEach {
             candidates.removeValue(forKey: $0)
             appliedCandidateIDs.removeValue(forKey: $0)
+            appliedReleaseChoices.removeValue(forKey: $0)
         }
         folders.removeAll { $0.id == folder.id }
         schedulePersistence()
@@ -327,6 +355,7 @@ final class AppModel: ObservableObject {
                         documents[index] = refreshed
                         candidates.removeValue(forKey: existing.id)
                         appliedCandidateIDs.removeValue(forKey: existing.id)
+                        appliedReleaseChoices.removeValue(forKey: existing.id)
                     } else { documents.append(incoming) }
                 }
                 await persistNow()
@@ -364,6 +393,7 @@ final class AppModel: ObservableObject {
                 operation = L10n.text("Identifying", "正在识别")
                 candidates.removeValue(forKey: item.id)
                 appliedCandidateIDs.removeValue(forKey: item.id)
+                appliedReleaseChoices.removeValue(forKey: item.id)
                 do {
                     let url = try accessibleURL(for: item)
                     let scoped = url.startAccessingSecurityScopedResource()
@@ -372,10 +402,11 @@ final class AppModel: ObservableObject {
                     try Task.checkCancellation()
                     candidates[item.id] = matches
                     if automaticallyApply {
-                        switch MusicRecognitionService.automaticMatch(from: matches, originalAlbum: item.original.album) {
+                        switch MusicRecognitionService.automaticMatch(from: matches) {
                         case .selected(let candidate):
                             let warning = try await applyCandidate(candidate, to: item)
                             applied += 1
+                            if candidate.hasAlbumConflict(with: item.original.album) { pending += 1 }
                             if warning != nil { detailWarnings += 1 }
                         case .belowThreshold:
                             pending += 1
@@ -475,6 +506,7 @@ final class AppModel: ObservableObject {
                     documents.append(restored)
                 }
                 appliedCandidateIDs.removeValue(forKey: restored.id)
+                appliedReleaseChoices.removeValue(forKey: restored.id)
                 candidates.removeValue(forKey: restored.id)
                 completedCount = 1
                 await persistNow()

@@ -25,22 +25,22 @@ final class MusicRecognitionTests: XCTestCase {
 
     func testAutomaticMatchAcceptsExactNinetyPercentWithoutRoundingUpLowerScores() {
         let boundary = candidate("boundary", score: 0.9)
-        guard case .selected(let selected) = MusicRecognitionService.automaticMatch(from: [boundary], originalAlbum: "") else {
+        guard case .selected(let selected) = MusicRecognitionService.automaticMatch(from: [boundary]) else {
             return XCTFail("Exactly 90% must be eligible")
         }
         XCTAssertEqual(selected.id, boundary.id)
 
         let below = candidate("below", score: 0.899999)
-        guard case .belowThreshold = MusicRecognitionService.automaticMatch(from: [below], originalAlbum: "") else {
+        guard case .belowThreshold = MusicRecognitionService.automaticMatch(from: [below]) else {
             return XCTFail("A value below 90% must not become eligible through display rounding")
         }
     }
 
-    func testAutomaticMatchChoosesHighestScoreRegardlessOfInputOrderOrOriginalAlbum() {
+    func testAutomaticMatchChoosesHighestScoreRegardlessOfInputOrderOrAlbum() {
         let candidates = [candidate("existing-album", score: 0.94, album: "Existing Album"),
                           candidate("highest", score: 0.99, album: "Different Album"),
                           candidate("low", score: 0.5)]
-        guard case .selected(let selected) = MusicRecognitionService.automaticMatch(from: candidates, originalAlbum: "Existing Album") else {
+        guard case .selected(let selected) = MusicRecognitionService.automaticMatch(from: candidates) else {
             return XCTFail("A unique highest score must win")
         }
         XCTAssertEqual(selected.id, "highest")
@@ -50,7 +50,7 @@ final class MusicRecognitionTests: XCTestCase {
         let candidates = [candidate("top-a", score: 0.97, album: "First"),
                           candidate("top-b", score: 0.97, album: "Second"),
                           candidate("existing", score: 0.96, album: "Existing")]
-        guard case .ambiguous = MusicRecognitionService.automaticMatch(from: candidates, originalAlbum: "Existing") else {
+        guard case .ambiguous = MusicRecognitionService.automaticMatch(from: candidates) else {
             return XCTFail("Album preference must never lower the fingerprint score")
         }
     }
@@ -59,11 +59,11 @@ final class MusicRecognitionTests: XCTestCase {
         let invalidScores: [Double?] = [nil, .nan, .infinity, -.infinity, -0.01, 1.01]
         let invalid = invalidScores.enumerated().map { candidate("invalid-\($0.offset)", score: $0.element) }
         for candidates in [[], invalid] {
-            guard case .noMatch = MusicRecognitionService.automaticMatch(from: candidates, originalAlbum: "") else {
+            guard case .noMatch = MusicRecognitionService.automaticMatch(from: candidates) else {
                 return XCTFail("Missing or invalid fingerprint scores cannot drive automatic matching")
             }
         }
-        guard case .belowThreshold = MusicRecognitionService.automaticMatch(from: invalid + [candidate("zero", score: 0)], originalAlbum: "") else {
+        guard case .belowThreshold = MusicRecognitionService.automaticMatch(from: invalid + [candidate("zero", score: 0)]) else {
             return XCTFail("A valid zero score is a below-threshold match")
         }
     }
@@ -79,7 +79,7 @@ final class MusicRecognitionTests: XCTestCase {
         XCTAssertEqual(MusicRecognitionService.rankedCandidates(Array(candidates.reversed())).map(\.id), ranked.map(\.id))
 
         let repeated = candidate("same", score: 0.95)
-        guard case .selected(let selected) = MusicRecognitionService.automaticMatch(from: [repeated, repeated], originalAlbum: "") else {
+        guard case .selected(let selected) = MusicRecognitionService.automaticMatch(from: [repeated, repeated]) else {
             return XCTFail("Repeated copies of one candidate are not an ambiguous tie")
         }
         XCTAssertEqual(selected.id, repeated.id)
@@ -225,19 +225,19 @@ final class MusicRecognitionTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
     }
 
-    func testShazamAutomaticChoiceDoesNotUseAcoustIDThresholdOrAlbumPreference() {
+    func testShazamAutomaticChoiceDoesNotUseAcoustIDThreshold() {
         var first = candidate("shazam:first", score: nil, album: "Existing")
         first.source = .shazamKit
         var second = candidate("shazam:second", score: nil)
         second.source = .shazamKit
-        guard case .selected(let selected) = MusicRecognitionService.automaticMatch(from: [first], originalAlbum: "") else {
+        guard case .selected(let selected) = MusicRecognitionService.automaticMatch(from: [first]) else {
             return XCTFail("A unique Shazam match should enter the draft without inventing a score")
         }
         XCTAssertEqual(selected.id, first.id)
-        guard case .ambiguous = MusicRecognitionService.automaticMatch(from: [first, second], originalAlbum: "Existing") else {
-            return XCTFail("Shazam matches must not be disambiguated using AcoustID edition rules")
+        guard case .ambiguous = MusicRecognitionService.automaticMatch(from: [first, second]) else {
+            return XCTFail("Different Shazam songs require manual selection")
         }
-        guard case .ambiguous = MusicRecognitionService.automaticMatch(from: [first, candidate("other", score: 1)], originalAlbum: "") else {
+        guard case .ambiguous = MusicRecognitionService.automaticMatch(from: [first, candidate("other", score: 1)]) else {
             return XCTFail("Mixed provider results cannot share a confidence scale")
         }
     }
@@ -324,7 +324,7 @@ final class MusicRecognitionTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: source) }
         let matches = try await service.identify(url: source, apiKey: "key")
         XCTAssertEqual(matches.count, 6)
-        guard case .ambiguous = MusicRecognitionService.automaticMatch(from: matches, originalAlbum: "Existing") else {
+        guard case .ambiguous = MusicRecognitionService.automaticMatch(from: matches) else {
             return XCTFail("Tied recording identities require manual selection")
         }
         XCTAssertEqual(RecognitionURLProtocol.requestCount, 1)
@@ -383,6 +383,57 @@ final class MusicRecognitionTests: XCTestCase {
         XCTAssertEqual(RecognitionURLProtocol.requestCount, 0)
     }
 
+    func testShazamMatchesSharingCatalogSongProduceOneChoiceAndOneLookup() async throws {
+        let first = catalogShazam()
+        var duplicate = first
+        duplicate.id = "another-shazam-id"
+        duplicate.title = "Another spelling of the same song"
+        duplicate.appleMusicID = " 456 "
+        let second = duplicate
+        let song = appleSong()
+        for catalogAvailable in [true, false] {
+            let lookups = CatalogLookupIDs()
+            let service = MusicRecognitionService(session: session(), shazamProvider: { _ in [first, second] },
+                appleMusicProvider: { id in
+                    await lookups.record(id)
+                    return catalogAvailable ? song : nil
+                })
+            let matches = try await identifyShazam(using: service)
+            let requestedIDs = await lookups.ids
+            XCTAssertEqual(requestedIDs, ["456"], "Repeated catalog songs must not trigger repeated lookups")
+            XCTAssertEqual(matches.count, 1)
+            let match = try XCTUnwrap(matches.first)
+            XCTAssertEqual(match.tags.title, first.title)
+            XCTAssertEqual(match.shazamMetadata, first)
+            XCTAssertEqual(match.appleMusicMetadata, catalogAvailable ? song : nil)
+            guard case .selected(let selected) = MusicRecognitionService.automaticMatch(from: matches) else {
+                return XCTFail("Repeated identities for one song must not require a choice")
+            }
+            XCTAssertEqual(selected.id, match.id)
+        }
+    }
+
+    func testShazamMatchesWithoutValidCatalogIDsAreNotMergedByTitle() async throws {
+        let invalidIDs: [String?] = [nil, "", "invalid", "0", "-456", "456?storefront=us"]
+        for catalogID in invalidIDs {
+            let first = ShazamRecognitionResult(id: "first", title: "Same title", artist: "Same artist",
+                                               appleMusicID: catalogID)
+            let second = ShazamRecognitionResult(id: "second", title: first.title, artist: first.artist,
+                                                appleMusicID: catalogID)
+            let service = MusicRecognitionService(session: session(), shazamProvider: { _ in [first, second] },
+                appleMusicProvider: { _ in
+                    XCTFail("Absent or invalid catalog IDs must not be queried")
+                    return nil
+                })
+            let matches = try await identifyShazam(using: service)
+            XCTAssertEqual(matches.count, 2, "A shared title or invalid ID does not establish song identity")
+            XCTAssertEqual(Set(matches.map(\.id)).count, 2)
+            guard case .ambiguous = MusicRecognitionService.automaticMatch(from: matches) else {
+                return XCTFail("Distinct Shazam matches without catalog identity remain separate choices")
+            }
+        }
+    }
+
     func testAppleMusicCompletesEditionWithoutReplacingShazamPrimaryMetadata() async throws {
         let shazam = ShazamRecognitionResult(id: "123", title: "Shazam title", artist: "Shazam artist",
             genres: ["Pop"], isrc: "us-aaa-26-00001",
@@ -392,8 +443,8 @@ final class MusicRecognitionTests: XCTestCase {
             XCTAssertEqual(id, "456")
             return song
         })
-        XCTAssertEqual(matches.count, 2)
-        let edition = try XCTUnwrap(matches.first { $0.appleMusicMetadata != nil })
+        XCTAssertEqual(matches.count, 1, "Supplementation must enrich the existing song, not add another choice")
+        let edition = try XCTUnwrap(matches.first)
         XCTAssertEqual(edition.tags.title, shazam.title)
         XCTAssertEqual(edition.tags.artist, shazam.artist)
         XCTAssertEqual(edition.tags.genre, L10n.text("Pop", "流行"))
@@ -410,23 +461,16 @@ final class MusicRecognitionTests: XCTestCase {
         XCTAssertEqual(RecognitionURLProtocol.requestCount, 0)
     }
 
-    func testAppleMusicAutomaticSelectionRequiresCompatibleAlbum() async throws {
+    func testAppleMusicAutomaticSelectionReturnsTheSingleEnrichedSong() async throws {
         let song = appleSong()
         let matches = try await identifyShazam(using: shazamService(catalogShazam()) { _ in song })
-        for album in ["", "  CATALOG\t album  "] {
-            guard case .selected(let selected) = MusicRecognitionService.automaticMatch(from: matches, originalAlbum: album) else {
-                return XCTFail("A compatible catalog album should supplement the unique song")
-            }
-            XCTAssertEqual(selected.appleMusicMetadata, song)
+        guard case .selected(let selected) = MusicRecognitionService.automaticMatch(from: matches) else {
+            return XCTFail("A unique recognized song should be selected with its available catalog metadata")
         }
-        for album in ["Different edition", "Catalog album (Deluxe)"] {
-            guard case .selected(let selected) = MusicRecognitionService.automaticMatch(from: matches, originalAlbum: album) else {
-                return XCTFail("An incompatible edition must keep the basic Shazam match")
-            }
-            XCTAssertNil(selected.appleMusicMetadata)
-            XCTAssertTrue(selected.tags.album.isEmpty)
-            XCTAssertNotNil(selected.supplementationNotice)
-        }
+        XCTAssertEqual(matches.count, 1)
+        XCTAssertEqual(selected.appleMusicMetadata, song)
+        XCTAssertEqual(selected.tags.album, song.albumTitle)
+        XCTAssertNil(selected.supplementationNotice)
     }
 
     func testMissingCatalogArtworkRetainsShazamArtwork() async throws {
@@ -443,7 +487,7 @@ final class MusicRecognitionTests: XCTestCase {
         let duplicates = [candidate("same", score: 0.4), candidate("same", score: 0.98),
                           candidate("other", score: 0.95)]
         for matches in [duplicates, Array(duplicates.reversed())] {
-            guard case .selected(let selected) = MusicRecognitionService.automaticMatch(from: matches, originalAlbum: "") else {
+            guard case .selected(let selected) = MusicRecognitionService.automaticMatch(from: matches) else {
                 return XCTFail("Duplicate identities must retain their highest fingerprint score")
             }
             XCTAssertEqual(selected.id, "same")
@@ -573,22 +617,32 @@ final class MusicRecognitionTests: XCTestCase {
         }
     }
 
-    func testDifferentShazamMatchesRemainAmbiguousDespiteCatalogAlbumPreference() async throws {
-        var second = catalogShazam()
-        second.id = "other-shazam-song"
-        second.appleMusicID = "789"
+    func testDifferentCatalogSongsRemainSeparateDespiteSharedTitleAlbumOrShazamID() async throws {
         let first = catalogShazam()
-        let secondMatch = second
         let song = appleSong()
-        let service = MusicRecognitionService(session: session(), shazamProvider: { _ in [first, secondMatch] },
-            appleMusicProvider: { id in
-                var response = song
-                response.id = id
-                return response
-            })
-        let matches = try await identifyShazam(using: service)
-        guard case .ambiguous = MusicRecognitionService.automaticMatch(from: matches, originalAlbum: "Catalog album") else {
-            return XCTFail("Album preference cannot choose between distinct Shazam identities")
+        for secondShazamID in ["other-shazam-song", first.id] {
+            var second = first
+            second.id = secondShazamID
+            second.appleMusicID = "789"
+            let secondMatch = second
+            for catalogAvailable in [true, false] {
+                let lookups = CatalogLookupIDs()
+                let service = MusicRecognitionService(session: session(), shazamProvider: { _ in [first, secondMatch] },
+                    appleMusicProvider: { id in
+                        await lookups.record(id)
+                        var response = song
+                        response.id = id
+                        return catalogAvailable ? response : nil
+                    })
+                let matches = try await identifyShazam(using: service)
+                let requestedIDs = await lookups.ids
+                XCTAssertEqual(requestedIDs, ["456", "789"])
+                XCTAssertEqual(matches.count, 2)
+                XCTAssertEqual(Set(matches.map(\.id)).count, 2)
+                guard case .ambiguous = MusicRecognitionService.automaticMatch(from: matches) else {
+                    return XCTFail("Different catalog song IDs require manual selection even when their text matches")
+                }
+            }
         }
     }
 
@@ -683,6 +737,11 @@ final class MusicRecognitionTests: XCTestCase {
 private actor ShazamStagedFile {
     var url: URL?
     func record(_ url: URL) { self.url = url }
+}
+
+private actor CatalogLookupIDs {
+    private(set) var ids: [String] = []
+    func record(_ id: String) { ids.append(id) }
 }
 
 private final class RecognitionURLProtocol: URLProtocol {

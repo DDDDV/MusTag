@@ -86,26 +86,7 @@ struct TrackEditorView: View {
                     if let candidates = model.candidates[documentID], !candidates.isEmpty {
                         Section {
                             ForEach(candidates) { candidate in
-                                VStack(alignment: .leading, spacing: 10) {
-                                    Button { model.useCandidate(candidate, for: documentID) } label: {
-                                        MetadataCandidateRow(candidate: candidate,
-                                                             isApplied: model.appliedCandidateIDs[documentID] == candidate.id)
-                                            .frame(maxWidth: .infinity, alignment: .leading)
-                                            .contentShape(Rectangle())
-                                    }
-                                    .buttonStyle(.plain)
-                                    .accessibilityIdentifier("metadataCandidate_\(candidate.id)")
-                                    .accessibilityAddTraits(model.appliedCandidateIDs[documentID] == candidate.id ? [.isSelected] : [])
-                                    .disabled(model.isWorking)
-                                    if let appleMusicURL = candidate.appleMusicURL {
-                                        Link(destination: appleMusicURL) {
-                                            Label(L10n.text("Listen on Apple Music", "在 Apple Music 中聆听"), systemImage: "arrow.up.right")
-                                                .font(.subheadline)
-                                        }
-                                        .buttonStyle(.borderless)
-                                        .accessibilityIdentifier("appleMusicLink_\(candidate.id)")
-                                    }
-                                }
+                                candidateView(candidate, document: document)
                             }
                         } header: {
                             Text(L10n.text("Matching candidates", "匹配候选"))
@@ -115,9 +96,9 @@ struct TrackEditorView: View {
                                     Text(L10n.text("Fingerprint matches are sorted by similarity. Tied matches or matches below 90% need manual selection. AcoustID supplies the available title and artist; other fields keep their current values.", "指纹候选按相似度从高到低排列。最高分并列或低于 90% 时需手动选择。AcoustID 提供可用的歌名和艺术家，其余字段保留现有内容。"))
                                 }
                                 if candidates.contains(where: { $0.source == .shazamKit }) {
-                                    Text(L10n.text("Shazam matches use Apple Music to complete available album, year, track and disc details. If the lookup is unavailable, the Shazam match is kept. Multiple song matches or a different Apple Music album need manual selection. Check the edition before saving.", "Shazam 识别后通过 Apple Music 补全可用的专辑、年份、曲序及碟号；查询不可用时保留 Shazam 识别结果。多个歌曲匹配或 Apple Music 专辑与原专辑不同时需手动选择，保存前请核对发行版本。"))
+                                    Text(L10n.text("Shazam and Apple Music details are combined in one result per song. If the album differs from your file, choose which album information to use within that result. If the lookup is unavailable, the Shazam details are kept. Check the edition before saving.", "同一首歌的 Shazam 识别与 Apple Music 补全合并为一个结果。专辑与文件原值不同时，在该结果中选择采用哪套专辑信息；查询不可用时保留 Shazam 信息。保存前请核对发行版本。"))
                                 }
-                                Text(L10n.text("The selected result fills the draft and downloads its cover. Missing fields keep their current values; unavailable covers keep the original cover. Review before saving.", "选中结果后填入草稿并下载封面。空缺字段保留现有内容，未获取到封面时保留原封面，预览确认后保存。"))
+                                Text(L10n.text("Changes stay in the draft. When applying a match, missing fields keep their current values and unavailable covers keep the original cover. Review before saving.", "修改先填入草稿。采用匹配信息时，空缺字段保留现有内容，未获取到封面时保留原封面。预览确认后保存。"))
                             }
                         }
                     }
@@ -173,6 +154,66 @@ struct TrackEditorView: View {
                 ContentUnavailableView(L10n.text("File removed", "文件已移除"), systemImage: "doc")
             }
         }
+    }
+
+    private func candidateView(_ candidate: MetadataCandidate, document: AudioDocument) -> some View {
+        let isApplied = model.appliedCandidateIDs[documentID] == candidate.id
+        let hasConflict = candidate.hasAlbumConflict(with: document.original.album)
+        let releaseChoice = isApplied ? model.appliedReleaseChoices[documentID] : nil
+        return VStack(alignment: .leading, spacing: 10) {
+            if hasConflict {
+                MetadataCandidateRow(candidate: candidate, isApplied: isApplied,
+                                     originalAlbum: document.original.album, releaseChoice: releaseChoice)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("metadataCandidate_\(candidate.id)")
+                Text(L10n.text("The albums differ. Album artist, year, track, disc and cover are handled with the album choice.",
+                               "专辑与文件原值不同。专辑艺术家、年份、曲序、碟号及封面随专辑选择一起处理。"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                releaseChoiceButton(candidate, choice: .keepOriginal,
+                                    title: L10n.text("Keep original album information", "保留原专辑信息"),
+                                    identifier: "keepOriginalAlbum_\(candidate.id)", selected: releaseChoice == .keepOriginal)
+                releaseChoiceButton(candidate, choice: .appleMusic,
+                                    title: L10n.text("Use Apple Music information", "采用 Apple Music 信息"),
+                                    identifier: "useAppleMusicAlbum_\(candidate.id)", selected: releaseChoice == .appleMusic)
+            } else {
+                Button { model.useCandidate(candidate, for: documentID) } label: {
+                    MetadataCandidateRow(candidate: candidate, isApplied: isApplied)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("metadataCandidate_\(candidate.id)")
+                .accessibilityAddTraits(isApplied ? [.isSelected] : [])
+                .disabled(model.isWorking)
+            }
+            if let appleMusicURL = candidate.appleMusicURL {
+                Link(destination: appleMusicURL) {
+                    Label(L10n.text("Listen on Apple Music", "在 Apple Music 中聆听"), systemImage: "arrow.up.right")
+                        .font(.subheadline)
+                }
+                .buttonStyle(.borderless)
+                .accessibilityIdentifier("appleMusicLink_\(candidate.id)")
+            }
+        }
+    }
+
+    private func releaseChoiceButton(_ candidate: MetadataCandidate, choice: CandidateReleaseChoice,
+                                     title: String, identifier: String, selected: Bool) -> some View {
+        Button { model.useCandidate(candidate, for: documentID, releaseChoice: choice) } label: {
+            HStack {
+                Text(title)
+                Spacer(minLength: 8)
+                if selected {
+                    Image(systemName: "checkmark").accessibilityHidden(true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .buttonStyle(.bordered)
+        .accessibilityIdentifier(identifier)
+        .accessibilityAddTraits(selected ? [.isSelected] : [])
+        .disabled(model.isWorking)
     }
 
     private func tagInput(_ field: TagField, document: AudioDocument) -> some View {
@@ -304,6 +345,22 @@ private struct RecognitionMetadataDetailsView: View {
 private struct MetadataCandidateRow: View {
     let candidate: MetadataCandidate
     let isApplied: Bool
+    var originalAlbum: String? = nil
+    var releaseChoice: CandidateReleaseChoice? = nil
+
+    private var needsAlbumChoice: Bool { isApplied && originalAlbum != nil && releaseChoice == nil }
+
+    private var appliedText: String {
+        guard originalAlbum != nil else { return L10n.text("Applied to draft", "已填入草稿") }
+        switch releaseChoice {
+        case .keepOriginal:
+            return L10n.text("Original album information kept · applied to draft", "保留原专辑信息 · 已填入草稿")
+        case .appleMusic:
+            return L10n.text("Apple Music information applied to draft", "已采用 Apple Music 信息")
+        case nil:
+            return L10n.text("Song details added · choose album information", "歌曲信息已填入 · 请选择专辑信息")
+        }
+    }
 
     private var similarity: String? {
         guard let score = candidate.score, score.isFinite, (0...1).contains(score) else { return nil }
@@ -335,7 +392,12 @@ private struct MetadataCandidateRow: View {
                         .font(.caption.weight(.medium))
                         .foregroundStyle(.indigo)
                 }
-                if !candidate.tags.album.isEmpty {
+                if let originalAlbum {
+                    Text(L10n.text("Original album: ", "文件原专辑：") + originalAlbum)
+                        .font(.subheadline).foregroundStyle(.secondary)
+                    Text(L10n.text("Apple Music album: ", "Apple Music 专辑：") + candidate.tags.album)
+                        .font(.subheadline).foregroundStyle(.primary)
+                } else if !candidate.tags.album.isEmpty {
                     Text(candidate.tags.album).font(.subheadline).foregroundStyle(.primary)
                 }
                 if !editionDetails.isEmpty {
@@ -354,13 +416,13 @@ private struct MetadataCandidateRow: View {
                         .foregroundStyle(.secondary)
                 }
                 if isApplied {
-                    Text(L10n.text("Applied to draft", "已填入草稿"))
+                    Text(appliedText)
                         .font(.caption.weight(.medium))
                         .foregroundStyle(.indigo)
                 }
             }
             Spacer(minLength: 0)
-            Image(systemName: isApplied ? "checkmark.circle.fill" : "arrow.down.to.line")
+            Image(systemName: needsAlbumChoice ? "exclamationmark.circle" : (isApplied ? "checkmark.circle.fill" : "arrow.down.to.line"))
                 .font(.subheadline)
                 .foregroundStyle(isApplied ? Color.indigo : Color.secondary)
                 .padding(.top, 3)
