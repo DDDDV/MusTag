@@ -5,8 +5,6 @@ import UIKit
 enum CoverArtUITestSupport {
     static let recordingID = "10000000-0000-0000-0000-000000000001"
     static let lowerRecordingID = "10000000-0000-0000-0000-000000000002"
-    static let releaseID = "20000000-0000-0000-0000-000000000001"
-    static let lowerReleaseID = "20000000-0000-0000-0000-000000000002"
 
     static func session() -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
@@ -15,16 +13,32 @@ enum CoverArtUITestSupport {
     }
 
     static func candidate(tags: AudioTags) -> MetadataCandidate {
-        MetadataCandidate(id: "ui-cover-release", recordingID: recordingID,
-                          releaseID: releaseID, tags: tags, detail: "Cover preview test edition")
+        var match = shazamResult()
+        match.title = tags.title
+        match.artist = tags.artist
+        return MetadataCandidate(id: "ui-cover-release", tags: tags, detail: "Cover preview test match",
+                                 source: .shazamKit, artworkURL: match.artworkURL,
+                                 appleMusicURL: match.appleMusicURL, shazamMetadata: match)
     }
 
     static func shazamResult() -> ShazamRecognitionResult {
         ShazamRecognitionResult(id: "ui-shazam-song", title: "Shazam matched title",
             artist: "Shazam matched artist", genres: ["Pop"], isrc: "USAAA2600001",
             artworkURL: URL(string: "https://is1-ssl.mzstatic.com/ui-shazam-cover.png"),
-            appleMusicURL: URL(string: "https://music.apple.com/us/album/test/123?i=456"))
+            appleMusicURL: URL(string: "https://music.apple.com/us/album/test/123?i=456"),
+            subtitle: "Shazam supplementary details", appleMusicID: "456",
+            webURL: URL(string: "https://www.shazam.com/track/456/test"), explicitContent: false)
     }
+
+    static func appleMusicSong() -> AppleMusicSongMetadata {
+        AppleMusicSongMetadata(id: "456", title: "Catalog title differs", artist: "Catalog artist differs",
+            albumTitle: "Test album", albumArtist: "Album artist",
+            releaseDate: ISO8601DateFormatter().date(from: "1998-04-05T00:00:00Z"),
+            trackNumber: 7, discNumber: 2, isrc: "USAAA2600001", duration: 120,
+            url: URL(string: "https://music.apple.com/us/album/test/123?i=456"),
+            artworkURL: URL(string: "https://is1-ssl.mzstatic.com/ui-shazam-cover.png"), genres: ["Jazz"])
+    }
+
 }
 
 private final class CoverArtUITestProtocol: URLProtocol {
@@ -38,28 +52,11 @@ private final class CoverArtUITestProtocol: URLProtocol {
             // Deliberately return the lower score first to exercise the user-visible ranking.
             data = Data("""
             {"status":"ok","results":[
-              {"score":0.89,"recordings":[{"id":"\(CoverArtUITestSupport.lowerRecordingID)","title":"Similar title"}]},
-              {"score":0.97,"recordings":[{"id":"\(CoverArtUITestSupport.recordingID)","title":"Matched title"}]}
+              {"score":0.89,"recordings":[{"id":"\(CoverArtUITestSupport.lowerRecordingID)","title":"Similar title","duration":120,"artists":[{"name":"Other artist"}]}]},
+              {"score":0.97,"recordings":[{"id":"\(CoverArtUITestSupport.recordingID)","title":"Matched title","duration":120,"artists":[{"name":"Matched artist"}]}]}
             ]}
             """.utf8)
-        } else if url.host == "musicbrainz.org", url.path == "/ws/2/recording/\(CoverArtUITestSupport.recordingID)" {
-            data = Data("""
-            {"id":"\(CoverArtUITestSupport.recordingID)","title":"Matched title","length":120000,
-             "artist-credit":[{"name":"Matched artist"}],
-             "releases":[{"id":"\(CoverArtUITestSupport.releaseID)","title":"Test album"}]}
-            """.utf8)
-        } else if url.host == "musicbrainz.org", url.path == "/ws/2/recording/\(CoverArtUITestSupport.lowerRecordingID)" {
-            data = Data("""
-            {"id":"\(CoverArtUITestSupport.lowerRecordingID)","title":"Similar title","length":120000,
-             "artist-credit":[{"name":"Other artist"}],
-             "releases":[{"id":"\(CoverArtUITestSupport.lowerReleaseID)","title":"Different album"}]}
-            """.utf8)
-        } else if url.host == "musicbrainz.org", url.path == "/ws/2/release/\(CoverArtUITestSupport.lowerReleaseID)" {
-            data = Data("{\"id\":\"\(CoverArtUITestSupport.lowerReleaseID)\",\"title\":\"Different album\",\"media\":[]}".utf8)
-        } else if url.host == "musicbrainz.org", url.path == "/ws/2/release/\(CoverArtUITestSupport.releaseID)" {
-            data = Data("{\"id\":\"\(CoverArtUITestSupport.releaseID)\",\"title\":\"Test album\",\"media\":[]}".utf8)
-        } else if (url.host == "coverartarchive.org" && url.path == "/release/\(CoverArtUITestSupport.releaseID)/front-1200")
-                    || (url.host == "is1-ssl.mzstatic.com" && url.path == "/ui-shazam-cover.png") {
+        } else if url.host == "is1-ssl.mzstatic.com", url.path == "/ui-shazam-cover.png" {
             let format = UIGraphicsImageRendererFormat()
             format.scale = 1
             data = UIGraphicsImageRenderer(size: CGSize(width: 300, height: 300), format: format).pngData { context in

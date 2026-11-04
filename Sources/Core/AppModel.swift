@@ -57,18 +57,18 @@ final class AppModel: ObservableObject {
         if Self.isUITesting && ProcessInfo.processInfo.arguments.contains("--ui-testing-shazam") {
             let session = CoverArtUITestSupport.session()
             self.recognition = MusicRecognitionService(session: session,
-                shazamProvider: { _ in [CoverArtUITestSupport.shazamResult()] })
+                shazamProvider: { _ in [CoverArtUITestSupport.shazamResult()] },
+                appleMusicProvider: { _ in CoverArtUITestSupport.appleMusicSong() })
             self.coverArt = CoverArtService(session: session)
             self.recognitionProvider = .shazamKit
         } else if Self.isUITesting && ProcessInfo.processInfo.arguments.contains("--ui-testing-auto-match") {
             let session = CoverArtUITestSupport.session()
-            self.recognition = MusicRecognitionService(session: session, minimumMusicBrainzInterval: 0,
-                minimumAcoustIDInterval: 0, fingerprintProvider: { _ in ("ui-test-fingerprint", 120) })
+            self.recognition = MusicRecognitionService(session: session, minimumAcoustIDInterval: 0, fingerprintProvider: { _ in ("ui-test-fingerprint", 120) })
             self.coverArt = CoverArtService(session: session)
             self.recognitionProvider = .acoustID
         } else if Self.isUITesting && ProcessInfo.processInfo.arguments.contains("--ui-testing-with-cover") {
             let session = CoverArtUITestSupport.session()
-            self.recognition = MusicRecognitionService(session: session, minimumMusicBrainzInterval: 0)
+            self.recognition = MusicRecognitionService(session: session)
             self.coverArt = CoverArtService(session: session)
         } else {
             self.recognition = recognition
@@ -187,7 +187,8 @@ final class AppModel: ObservableObject {
     /// Prepare the complete selection before changing the draft, so cancellation is atomic per file.
     private func applyCandidate(_ candidate: MetadataCandidate, to document: AudioDocument) async throws -> String? {
         operation = L10n.text("Loading match", "正在读取匹配结果")
-        let resolved = try await recognition.resolve(candidate)
+        try Task.checkCancellation()
+        let resolved = candidate
         var tags = document.draft
         for field in TagField.allCases {
             let proposed = field.value(in: resolved.tags)
@@ -199,18 +200,12 @@ final class AppModel: ObservableObject {
         // A newly selected release must never retain another release's pending cover.
         var artwork = document.originalArtwork
         var coverNotice: String?
-        if resolved.source == .shazamKit || resolved.releaseID != nil {
+        if resolved.source == .shazamKit {
             operation = L10n.text("Downloading cover", "正在下载封面")
             do {
                 let downloaded: AudioArtwork?
-                if resolved.source == .shazamKit {
-                    if let url = resolved.artworkURL {
-                        downloaded = try await coverArt.shazamCover(url: url)
-                    } else {
-                        downloaded = nil
-                    }
-                } else if let releaseID = resolved.releaseID {
-                    downloaded = try await coverArt.frontCover(releaseID: releaseID)
+                if let url = resolved.artworkURL {
+                    downloaded = try await coverArt.shazamCover(url: url)
                 } else {
                     downloaded = nil
                 }
@@ -228,22 +223,22 @@ final class AppModel: ObservableObject {
                     "Cover download failed. Tags were added to the draft; the original cover was kept. Select the match again to retry.\n",
                     "封面下载失败。文字标签已填入草稿，原封面保持不变。可再次选择此匹配重试。\n") + error.localizedDescription
             }
-        } else {
-            coverNotice = L10n.text("This match has no release to look up a cover. The original cover was kept.",
-                                    "此匹配没有可用于查找封面的发行版本，原封面保持不变。")
         }
         try Task.checkCancellation()
+        let notices = [resolved.supplementationNotice, coverNotice].compactMap { $0 }
+        let selectionNotice = notices.isEmpty ? nil : notices.joined(separator: "\n")
         if let index = documents.firstIndex(where: { $0.id == document.id }) {
             documents[index].draft = tags
             documents[index].draftArtwork = artwork
             if resolved.source == .shazamKit {
                 documents[index].draftShazamAttribution = ShazamAttribution(
-                    title: resolved.tags.title, artist: resolved.tags.artist, appleMusicURL: resolved.appleMusicURL)
+                    title: resolved.tags.title, artist: resolved.tags.artist, appleMusicURL: resolved.appleMusicURL,
+                    metadata: resolved.shazamMetadata, appleMusicMetadata: resolved.appleMusicMetadata)
             }
-            documents[index].error = coverNotice
+            documents[index].error = selectionNotice
             appliedCandidateIDs[document.id] = candidate.id
         }
-        return coverNotice
+        return selectionNotice
     }
 
     func discardChanges(for id: UUID) {
@@ -362,7 +357,7 @@ final class AppModel: ObservableObject {
             var applied = 0
             var pending = 0
             var unmatched = 0
-            var coverWarnings = 0
+            var detailWarnings = 0
             for item in items {
                 if Task.isCancelled { break }
                 currentFile = item.fileName
@@ -381,7 +376,7 @@ final class AppModel: ObservableObject {
                         case .selected(let candidate):
                             let warning = try await applyCandidate(candidate, to: item)
                             applied += 1
-                            if warning != nil { coverWarnings += 1 }
+                            if warning != nil { detailWarnings += 1 }
                         case .belowThreshold:
                             pending += 1
                             setError(L10n.text("Best similarity is below 90%. Choose a match manually; your draft was kept.",
@@ -391,15 +386,15 @@ final class AppModel: ObservableObject {
                             setError(provider == .shazamKit
                                 ? L10n.text("Shazam returned several matches. Choose one manually; your draft was kept.",
                                             "Shazam 返回了多个匹配，请手动选择；已有草稿保持不变。")
-                                : L10n.text("Several matches share the highest similarity. Choose a release manually; your draft was kept.",
-                                            "存在多个最高相似度版本，请手动选择；已有草稿保持不变。"), for: item.id)
+                                : L10n.text("Several matches share the highest similarity. Choose a song manually; your draft was kept.",
+                                            "存在多个最高相似度匹配，请手动选择；已有草稿保持不变。"), for: item.id)
                         case .noMatch:
                             unmatched += 1
-                            setError(L10n.text("No match found. Try a title search or edit manually.",
-                                               "未找到匹配，可按歌名搜索或手动编辑。"), for: item.id)
+                            setError(L10n.text("No match found. Try another recognition provider or edit manually.",
+                                               "未找到匹配，可切换识别服务或手动编辑。"), for: item.id)
                         }
                     } else {
-                        setError(matches.isEmpty ? L10n.text("No match found. Try a title search or edit manually.", "未找到匹配，可按歌名搜索或手动编辑。") : nil, for: item.id)
+                        setError(matches.isEmpty ? L10n.text("No match found. Try another recognition provider or edit manually.", "未找到匹配，可切换识别服务或手动编辑。") : nil, for: item.id)
                     }
                 } catch is CancellationError { break }
                 catch {
@@ -418,8 +413,8 @@ final class AppModel: ObservableObject {
                     L10n.text("No match: \(unmatched)", "未找到匹配：\(unmatched)"),
                     L10n.text("Failed: \(failures.count)", "处理失败：\(failures.count)")
                 ]
-                if coverWarnings > 0 {
-                    lines.append(L10n.text("Original cover kept: \(coverWarnings)", "未获取新封面，保留原封面：\(coverWarnings)"))
+                if detailWarnings > 0 {
+                    lines.append(L10n.text("Metadata or cover notices: \(detailWarnings)", "补全或封面提示：\(detailWarnings)"))
                 }
                 if Task.isCancelled {
                     lines.append(L10n.text("Stopped. Unprocessed: \(items.count - completedCount)",
@@ -432,28 +427,6 @@ final class AppModel: ObservableObject {
             } else if !failures.isEmpty {
                 notice = failures.prefix(5).joined(separator: "\n")
             }
-        }
-    }
-
-    func search(_ id: UUID, title: String, artist: String) {
-        guard !isWorking else { return }
-        guard !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            notice = L10n.text("Enter a title to search MusicBrainz.", "请输入歌名以搜索 MusicBrainz。")
-            return
-        }
-        begin(L10n.text("Searching", "正在搜索"), total: 1)
-        currentFile = document(id)?.fileName ?? ""
-        operationTask = Task {
-            defer { finish() }
-            do {
-                let matches = try await recognition.search(title: title, artist: artist)
-                candidates[id] = matches
-                appliedCandidateIDs.removeValue(forKey: id)
-                setError(matches.isEmpty ? L10n.text("No results. Try another title or artist.", "没有找到结果，请调整歌名或艺术家。") : nil, for: id)
-                completedCount = 1
-                await persistNow()
-            } catch is CancellationError { }
-            catch { notice = error.localizedDescription }
         }
     }
 

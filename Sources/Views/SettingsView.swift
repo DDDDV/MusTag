@@ -29,7 +29,7 @@ struct SettingsView: View {
                     Text(L10n.text("Music recognition", "歌曲识别"))
                 } footer: {
                     if model.recognitionProvider == .shazamKit {
-                        Text(L10n.text("ShazamKit identifies selected files without using the microphone. Audio signatures are sent to Apple; the original audio is not uploaded. Review matched tags and covers before saving.", "ShazamKit 直接识别所选文件，无需使用麦克风。音频签名会发送至 Apple，原音频不会上传。匹配的标签和封面需预览确认后保存。"))
+                        Text(L10n.text("ShazamKit identifies selected files without using the microphone. Audio signatures are sent to Apple; the original audio is not uploaded. Apple Music can complete album, year, track and disc details after you grant music access. Review matched tags and covers before saving.", "ShazamKit 直接识别所选文件，无需使用麦克风。音频签名会发送至 Apple，原音频不会上传。授予音乐访问权限后，可通过 Apple Music 补全专辑、年份、曲序和碟号。匹配的标签和封面需预览确认后保存。"))
                     }
                 }
 
@@ -62,7 +62,7 @@ struct SettingsView: View {
                     } header: {
                         Text("AcoustID")
                     } footer: {
-                        Text(L10n.text("Use an application key, not a user key. Recognition sends only the audio fingerprint and duration. Your key is stored securely on this device. Manual editing and title search work without a key.", "请填写应用 Key，而非用户 Key。识别仅发送音频指纹和时长；Key 安全保存在此设备。未配置时仍可手动编辑和按歌名搜索。"))
+                        Text(L10n.text("Use an application key, not a user key. Recognition sends only the audio fingerprint and duration, and fills the available title and artist. Your key is stored securely on this device. ShazamKit and manual editing work without a key.", "请填写应用 Key，而非用户 Key。识别仅发送音频指纹和时长，填入可用的歌名与艺术家；Key 安全保存在此设备。未配置时仍可使用 ShazamKit 和手动编辑。"))
                     }
                 }
 
@@ -170,8 +170,7 @@ private struct LicenseView: View {
             Section {
                 Link("ShazamKit", destination: URL(string: "https://developer.apple.com/shazamkit/")!)
                 Link("AcoustID", destination: URL(string: "https://acoustid.org/")!)
-                Link("MusicBrainz", destination: URL(string: "https://musicbrainz.org/")!)
-                Link("Cover Art Archive", destination: URL(string: "https://coverartarchive.org/")!)
+                Link("MusicKit", destination: URL(string: "https://developer.apple.com/musickit/")!)
             } header: { Text(L10n.text("Metadata services", "元数据服务")) }
         }
         .navigationTitle(L10n.text("Acknowledgements", "致谢"))

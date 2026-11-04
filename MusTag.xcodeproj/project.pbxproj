@@ -51,11 +51,11 @@
 		344948818E5A4F92EFD871E8 /* oggpage.cpp in Sources */ = {isa = PBXBuildFile; fileRef = FD053E589E4B07120B39184D /* oggpage.cpp */; };
 		34738233A784488D3A34F6C5 /* MTTagBridge.mm in Sources */ = {isa = PBXBuildFile; fileRef = 95B59F29F849424B23302886 /* MTTagBridge.mm */; };
 		347A1E77F7DF1C1D03C66263 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA59E2E5A8D3236DD4852B67 /* Models.swift */; };
-		AC5DAB026AC740CC97CF7A08 /* GenreLocalization.swift in Sources */ = {isa = PBXBuildFile; fileRef = BCD3A65279014331968B04A8 /* GenreLocalization.swift */; };
 		38131681F68C74A95E9628FF /* libChromaprint.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 6E0ABF603D3ACE22800BC4CD /* libChromaprint.a */; };
 		38FE7E8A6BB8557F81B9445E /* apeproperties.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 28C5F658EC879CC2BB4FC60D /* apeproperties.cpp */; };
 		3C8E2045EB4DE6CED4B2FD82 /* chroma.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 97B40A4201DEF7D37E3A26A5 /* chroma.cpp */; };
 		3DC2EBFC46CA786DC9B7D194 /* privateframe.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E7FA47EDC0C9A4A6971EE57D /* privateframe.cpp */; };
+		3DD08EEED7AB50762CEAFDB1 /* MusicKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 838A56D3719594EE86D3EDA9 /* MusicKit.framework */; };
 		3FDCE94B587A9BBC90341A2B /* mpegproperties.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 922E05B37E416B209B69C0B8 /* mpegproperties.cpp */; };
 		407C3DA064F06B115259B2F4 /* mp4itemfactory.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7CEACB1B363C094D5C15BD93 /* mp4itemfactory.cpp */; };
 		411D5942FE68377CA1C04B76 /* xmproperties.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 1AF3F2DC08F79961405E53E4 /* xmproperties.cpp */; };
@@ -165,6 +165,7 @@
 		C5F94F62C92459A89EE06BAC /* opusfile.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 0AED8F8F3E85670B7F9EC4CE /* opusfile.cpp */; };
 		C6908E9B6D65956D864A4378 /* id3v2tag.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 928903AADF248B0BFD4F8D67 /* id3v2tag.cpp */; };
 		C79EA1AF320077FF779C3A7C /* wavpackfile.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 521513596B0057D2C448848D /* wavpackfile.cpp */; };
+		C93DB6FE4341791AFDC5AB1A /* AppleMusicMetadataService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A0F5A06809850A908664C88 /* AppleMusicMetadataService.swift */; };
 		CECBDA0CAEC33860796FE2C7 /* NativeMetadataCodec.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2FCB4BB1F1B457FAFC1B9B9 /* NativeMetadataCodec.swift */; };
 		D0EFE44EDB5AC66A248098A7 /* mp4item.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 09875760E2453A79350D7380 /* mp4item.cpp */; };
 		D208C7887D8CA97E98657562 /* matroskaseekhead.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 15EFDF1551CA03E25432701A /* matroskaseekhead.cpp */; };
@@ -184,6 +185,7 @@
 		DF2382BDB4423973B4CF40F3 /* ArtworkView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBBD471DC6B72DAC96E8AB70 /* ArtworkView.swift */; };
 		DF9FD25832565875D5C162FD /* CoverArtUITestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = D551D50A36D7582B6F8379A7 /* CoverArtUITestSupport.swift */; };
 		E1856F12DA3B273518ADECE7 /* modproperties.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 4B4C5A3ADBC09B0A19F589FF /* modproperties.cpp */; };
+		E1D95449B76F80799F25EE5C /* AppleMusicMetadataTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86B663F725EF1153B6BA1640 /* AppleMusicMetadataTests.swift */; };
 		E33A79D5C0D977D8B15309C8 /* ebmlmkattachments.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 631406C22A6C315D79D39E2C /* ebmlmkattachments.cpp */; };
 		E42805FE005B783CE55F5851 /* MusicRecognitionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4004D5F6EF721D62A5F28880 /* MusicRecognitionTests.swift */; };
 		E4BF7AB066380327F5B7A2FF /* tbytevectorlist.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 22DD245AB0708F99C98768C1 /* tbytevectorlist.cpp */; };
@@ -197,6 +199,7 @@
 		EABC182B14FDC7533C112728 /* ebmldeferredbinaryelement.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 367B0026C8338FC4A7C66C28 /* ebmldeferredbinaryelement.cpp */; };
 		EBC2B80E6D8D5B929886A8D0 /* AudioDocumentPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43893B92F46E3599A78B9789 /* AudioDocumentPicker.swift */; };
 		ECE36BFE754C488C96D1EBA3 /* oggpageheader.cpp in Sources */ = {isa = PBXBuildFile; fileRef = B194170BA7F478F7FCDA490B /* oggpageheader.cpp */; };
+		EDD9CB70168FD24C320EF9EF /* GenreLocalization.swift in Sources */ = {isa = PBXBuildFile; fileRef = A33E08AC468E73081E6181B2 /* GenreLocalization.swift */; };
 		F026FB4AC176612B798B1031 /* fingerprint_decompressor.cpp in Sources */ = {isa = PBXBuildFile; fileRef = F002C23B0ADB891998FF5C8F /* fingerprint_decompressor.cpp */; };
 		F1BDF2F1A7A0F18361C79CCC /* modfile.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 29999A2E64F9AC1B3DBBC306 /* modfile.cpp */; };
 		F25F90A1D7758EE851B49BB1 /* libTagLib.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 4C529CB3AFAEB278C3D3401E /* libTagLib.a */; };
@@ -301,7 +304,7 @@
 		4004D5F6EF721D62A5F28880 /* MusicRecognitionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicRecognitionTests.swift; sourceTree = "<group>"; };
 		41D924FB771100F9D82CBAC4 /* chroma_resampler.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = chroma_resampler.cpp; sourceTree = "<group>"; };
 		4219BC9F73C6F7C6F32D5D8E /* id3v1genres.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = id3v1genres.cpp; sourceTree = "<group>"; };
-		42360C23139E8586C44ABBA6 /* MusTag.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MusTag.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		42360C23139E8586C44ABBA6 /* MusTag.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = MusTag.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		4261E1C02FDC23A6F91D7442 /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
 		4293E79E1ABCEEA5E2B54DC6 /* tzlib.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = tzlib.cpp; sourceTree = "<group>"; };
 		430EB0FDF27C5C78C54C491E /* matroskachapteredition.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = matroskachapteredition.cpp; sourceTree = "<group>"; };
@@ -331,6 +334,7 @@
 		575D2E88ACD1D765B168A7B3 /* dsdiffproperties.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = dsdiffproperties.cpp; sourceTree = "<group>"; };
 		590C3646416160AB4921137E /* ReviewSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewSheet.swift; sourceTree = "<group>"; };
 		595F7091203619E40733AEF8 /* MusTagUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusTagUITests.swift; sourceTree = "<group>"; };
+		5A0F5A06809850A908664C88 /* AppleMusicMetadataService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleMusicMetadataService.swift; sourceTree = "<group>"; };
 		5D372EEF06103EBF2D558381 /* fingerprint_compressor.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = fingerprint_compressor.cpp; sourceTree = "<group>"; };
 		5FE3AF5492F69F39607345F1 /* fingerprint_calculator.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = fingerprint_calculator.cpp; sourceTree = "<group>"; };
 		611076F922DC87F6F4D79C69 /* Fixtures */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Fixtures; path = Tests/Fixtures; sourceTree = SOURCE_ROOT; };
@@ -365,7 +369,9 @@
 		81872A5B7061E6AC32CB88FF /* tdebuglistener.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = tdebuglistener.cpp; sourceTree = "<group>"; };
 		833075840DB6A1765275A01B /* spectrum.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = spectrum.cpp; sourceTree = "<group>"; };
 		8336BB5D8C446F3BC39E780E /* flacunknownmetadatablock.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = flacunknownmetadatablock.cpp; sourceTree = "<group>"; };
+		838A56D3719594EE86D3EDA9 /* MusicKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MusicKit.framework; path = System/Library/Frameworks/MusicKit.framework; sourceTree = SDKROOT; };
 		83F3DB720E7F4B438A630298 /* ebmlmksegment.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ebmlmksegment.cpp; sourceTree = "<group>"; };
+		86B663F725EF1153B6BA1640 /* AppleMusicMetadataTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleMusicMetadataTests.swift; sourceTree = "<group>"; };
 		87577CE756D76C43B6ED0D4D /* Licenses */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Licenses; path = Sources/Resources/Licenses; sourceTree = SOURCE_ROOT; };
 		885380EDB09C8C4E77E865A2 /* mpcfile.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = mpcfile.cpp; sourceTree = "<group>"; };
 		88D29EC989D6BEA16DDB9958 /* mp4atom.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = mp4atom.cpp; sourceTree = "<group>"; };
@@ -388,6 +394,7 @@
 		9F5EE2AE135B0273C5AD3F17 /* fileref.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = fileref.cpp; sourceTree = "<group>"; };
 		A0661A3E1BD9D94A79A26690 /* shortentag.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = shortentag.cpp; sourceTree = "<group>"; };
 		A322694EED58A89A2AEDAA84 /* fingerprinter.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = fingerprinter.cpp; sourceTree = "<group>"; };
+		A33E08AC468E73081E6181B2 /* GenreLocalization.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GenreLocalization.swift; sourceTree = "<group>"; };
 		A6BC670D78A604DA34C7A1BB /* podcastframe.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = podcastframe.cpp; sourceTree = "<group>"; };
 		A9601DDBABD2DF107B95D6FA /* AudioFileStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioFileStore.swift; sourceTree = "<group>"; };
 		A97F719622D9FD3F10197D7F /* dsdiffdiintag.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = dsdiffdiintag.cpp; sourceTree = "<group>"; };
@@ -438,7 +445,6 @@
 		E9AE50C93A4011E723B644BB /* tagunion.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = tagunion.cpp; sourceTree = "<group>"; };
 		EA19D28EDEB1B8643A2D0F84 /* tableofcontentsframe.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = tableofcontentsframe.cpp; sourceTree = "<group>"; };
 		EA59E2E5A8D3236DD4852B67 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
-		BCD3A65279014331968B04A8 /* GenreLocalization.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GenreLocalization.swift; sourceTree = "<group>"; };
 		ED10DB69DA0D862CE590D156 /* urllinkframe.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = urllinkframe.cpp; sourceTree = "<group>"; };
 		ED794F75BA57F49D617D73DD /* mpegfile.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = mpegfile.cpp; sourceTree = "<group>"; };
 		F002C23B0ADB891998FF5C8F /* fingerprint_decompressor.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = fingerprint_decompressor.cpp; sourceTree = "<group>"; };
@@ -465,6 +471,7 @@
 				F3E6A7042253F2E0BFF94C06 /* Accelerate.framework in Frameworks */,
 				336AAB19DB59A2082D8A7BDF /* AVFoundation.framework in Frameworks */,
 				19A33280E212A0FF036586EB /* ShazamKit.framework in Frameworks */,
+				3DD08EEED7AB50762CEAFDB1 /* MusicKit.framework in Frameworks */,
 				0F120ACBDAECB350E28ABD09 /* ImageIO.framework in Frameworks */,
 				2C4F9B4A1593A56D8FDF5BD6 /* libz.tbd in Frameworks */,
 			);
@@ -689,6 +696,7 @@
 				1FD5A9D335DC41CF7ADCB701 /* AVFoundation.framework */,
 				C3AFEF4885EE408563D14718 /* ImageIO.framework */,
 				6EB1947113289D6A17DD6355 /* libz.tbd */,
+				838A56D3719594EE86D3EDA9 /* MusicKit.framework */,
 				344385B1263A74CCFEE20E74 /* ShazamKit.framework */,
 			);
 			name = Frameworks;
@@ -740,8 +748,8 @@
 			isa = PBXGroup;
 			children = (
 				ADBF4B8366B7C2F346153CFA /* AppModel.swift */,
+				A33E08AC468E73081E6181B2 /* GenreLocalization.swift */,
 				EA59E2E5A8D3236DD4852B67 /* Models.swift */,
-				BCD3A65279014331968B04A8 /* GenreLocalization.swift */,
 			);
 			path = Core;
 			sourceTree = "<group>";
@@ -792,6 +800,7 @@
 			isa = PBXGroup;
 			children = (
 				006D7C32194E2B0A83DA9734 /* APIKeyStore.swift */,
+				5A0F5A06809850A908664C88 /* AppleMusicMetadataService.swift */,
 				A9601DDBABD2DF107B95D6FA /* AudioFileStore.swift */,
 				709F04E888C53C79B6CE88BB /* CoverArtService.swift */,
 				D551D50A36D7582B6F8379A7 /* CoverArtUITestSupport.swift */,
@@ -1016,6 +1025,7 @@
 		F898633D19345F16956424A2 /* Tests */ = {
 			isa = PBXGroup;
 			children = (
+				86B663F725EF1153B6BA1640 /* AppleMusicMetadataTests.swift */,
 				ACA7ADB6162DCCACA2AFA735 /* ArtworkFlowTests.swift */,
 				C555F0107DC55686186D5626 /* AudioFileStoreTests.swift */,
 				0E5A0DBB261EC23B41C9B0B5 /* CoverArtServiceTests.swift */,
@@ -1166,6 +1176,7 @@
 						ProvisioningStyle = Automatic;
 					};
 					B55FB4AC5B437483D908F155 = {
+						DevelopmentTeam = 947X8JA62C;
 						ProvisioningStyle = Automatic;
 					};
 					BFB27A77AF34FB5807B282B1 = {
@@ -1235,15 +1246,16 @@
 			files = (
 				25DB6335FCF16A907DC74CB7 /* APIKeyStore.swift in Sources */,
 				342AA42A655BD1C389A0B1F2 /* AppModel.swift in Sources */,
+				C93DB6FE4341791AFDC5AB1A /* AppleMusicMetadataService.swift in Sources */,
 				DF2382BDB4423973B4CF40F3 /* ArtworkView.swift in Sources */,
 				EBC2B80E6D8D5B929886A8D0 /* AudioDocumentPicker.swift in Sources */,
 				69AFBE37EB4A274B520B182A /* AudioFileStore.swift in Sources */,
 				8D11E32FE07760A99BBD353D /* CoverArtService.swift in Sources */,
 				DF9FD25832565875D5C162FD /* CoverArtUITestSupport.swift in Sources */,
+				EDD9CB70168FD24C320EF9EF /* GenreLocalization.swift in Sources */,
 				7E157D4874CEAAC06DD7AC0A /* LibraryView.swift in Sources */,
 				34738233A784488D3A34F6C5 /* MTTagBridge.mm in Sources */,
 				347A1E77F7DF1C1D03C66263 /* Models.swift in Sources */,
-				AC5DAB026AC740CC97CF7A08 /* GenreLocalization.swift in Sources */,
 				81F41D12E3D2FEE05A53E23C /* MusTagApp.swift in Sources */,
 				DC6D15E5AD6A90963EEFCA13 /* MusicRecognitionService.swift in Sources */,
 				0D2982D1AFB216C72D9C1A90 /* NativeAudio.swift in Sources */,
@@ -1439,6 +1451,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				E1D95449B76F80799F25EE5C /* AppleMusicMetadataTests.swift in Sources */,
 				8A80417D5A9AEDFF15A4AA50 /* ArtworkFlowTests.swift in Sources */,
 				EAB69EBD857E0943301D76C5 /* AudioFileStoreTests.swift in Sources */,
 				90189E0BD1E87E985E1C0225 /* CoverArtServiceTests.swift in Sources */,

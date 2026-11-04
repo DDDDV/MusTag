@@ -5,7 +5,6 @@ struct TrackEditorView: View {
     let documentID: UUID
     @State private var showsReview = false
     @State private var showsDiscard = false
-    @State private var showsSearch = false
 
     var body: some View {
         Group {
@@ -113,10 +112,10 @@ struct TrackEditorView: View {
                         } footer: {
                             VStack(alignment: .leading, spacing: 6) {
                                 if candidates.contains(where: { $0.score != nil }) {
-                                    Text(L10n.text("Fingerprint matches are sorted by similarity. Matches below 90% or with unresolved edition choices need manual selection. You can choose another candidate at any time.", "指纹候选按相似度从高到低排列。低于 90% 或无法确定发行版本时需手动选择，也可以手动改选其他候选。"))
+                                    Text(L10n.text("Fingerprint matches are sorted by similarity. Tied matches or matches below 90% need manual selection. AcoustID supplies the available title and artist; other fields keep their current values.", "指纹候选按相似度从高到低排列。最高分并列或低于 90% 时需手动选择。AcoustID 提供可用的歌名和艺术家，其余字段保留现有内容。"))
                                 }
                                 if candidates.contains(where: { $0.source == .shazamKit }) {
-                                    Text(L10n.text("A single Shazam match fills the draft; multiple matches need manual selection. Shazam identifies the song, not its release edition. Search MusicBrainz for album, date, track and disc details.", "Shazam 返回唯一结果时填入草稿；多个结果需手动选择。识别歌曲不代表确定发行版本，专辑、日期、曲序及碟号可通过 MusicBrainz 搜索补全。"))
+                                    Text(L10n.text("Shazam matches use Apple Music to complete available album, year, track and disc details. If the lookup is unavailable, the Shazam match is kept. Multiple song matches or a different Apple Music album need manual selection. Check the edition before saving.", "Shazam 识别后通过 Apple Music 补全可用的专辑、年份、曲序及碟号；查询不可用时保留 Shazam 识别结果。多个歌曲匹配或 Apple Music 专辑与原专辑不同时需手动选择，保存前请核对发行版本。"))
                                 }
                                 Text(L10n.text("The selected result fills the draft and downloads its cover. Missing fields keep their current values; unavailable covers keep the original cover. Review before saving.", "选中结果后填入草稿并下载封面。空缺字段保留现有内容，未获取到封面时保留原封面，预览确认后保存。"))
                             }
@@ -142,17 +141,11 @@ struct TrackEditorView: View {
                     if model.isWorking { OperationFooter() }
                     else {
                         VStack(spacing: 10) {
-                            HStack(spacing: 12) {
-                                Button { model.identify([documentID], automaticallyApply: true) } label: {
-                                    Label(L10n.text("Auto-match", "自动匹配"), systemImage: "waveform")
-                                        .frame(maxWidth: .infinity)
-                                }
-                                .accessibilityIdentifier("trackIdentifyButton")
-                                Button { showsSearch = true } label: {
-                                    Label(L10n.text("Search", "按歌名搜索"), systemImage: "magnifyingglass")
-                                        .frame(maxWidth: .infinity)
-                                }
+                            Button { model.identify([documentID], automaticallyApply: true) } label: {
+                                Label(L10n.text("Auto-match", "自动匹配"), systemImage: "waveform")
+                                    .frame(maxWidth: .infinity)
                             }
+                            .accessibilityIdentifier("trackIdentifyButton")
                             .buttonStyle(.bordered)
                             Button { showsReview = true } label: {
                                 Text(L10n.text("Review changes", "预览修改"))
@@ -176,9 +169,6 @@ struct TrackEditorView: View {
                     Button(L10n.text("Discard changes", "撤销修改"), role: .destructive) { model.discardChanges(for: documentID) }
                 }
                 .sheet(isPresented: $showsReview) { ReviewSheet(documentIDs: [documentID]) }
-                .sheet(isPresented: $showsSearch) {
-                    MetadataSearchSheet(documentID: documentID, title: document.draft.title, artist: document.draft.artist)
-                }
             } else {
                 ContentUnavailableView(L10n.text("File removed", "文件已移除"), systemImage: "doc")
             }
@@ -213,7 +203,8 @@ struct TrackEditorView: View {
 
 struct ShazamAttributionView: View {
     let attribution: ShazamAttribution
-    // A later manual edit or MusicBrainz choice may preserve only some matched fields.
+    @State private var showsMetadataDetails = false
+    // A later manual edit or another match may preserve only some matched fields.
     // Describe the persisted match as a record, not as the source of every current tag.
     var context: String = L10n.text("Shazam recognition record", "Shazam 识别记录")
     let linkIdentifier: String
@@ -233,8 +224,80 @@ struct ShazamAttributionView: View {
                 .buttonStyle(.borderless)
                 .accessibilityIdentifier(linkIdentifier)
             }
+            if attribution.metadata != nil || attribution.appleMusicMetadata != nil {
+                Button(L10n.text("Recognition details", "识别详情")) { showsMetadataDetails = true }
+                    .font(.subheadline)
+                    .buttonStyle(.borderless)
+                    .accessibilityIdentifier("shazamMetadataDetailsButton")
+            }
         }
         .padding(.vertical, 3)
+        .sheet(isPresented: $showsMetadataDetails) {
+            RecognitionMetadataDetailsView(attribution: attribution)
+        }
+    }
+}
+
+private struct RecognitionMetadataDetailsView: View {
+    @Environment(\.dismiss) private var dismiss
+    let attribution: ShazamAttribution
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                if let metadata = attribution.metadata {
+                    Section {
+                        metadataRow("title", L10n.text("Title", "歌名"), metadata.title)
+                        metadataRow("artist", L10n.text("Artist", "艺术家"), metadata.artist)
+                        metadataRow("subtitle", L10n.text("Subtitle", "副标题"), metadata.subtitle)
+                        metadataRow("isrc", "ISRC", metadata.isrc)
+                        metadataRow("appleMusicID", L10n.text("Apple Music song ID", "Apple Music 歌曲标识"), metadata.appleMusicID)
+                        metadataRow("shazamID", L10n.text("Shazam ID", "Shazam 标识"), metadata.id)
+                        metadataRow("genres", L10n.text("Genres", "流派"), metadata.genres.joined(separator: " · "))
+                    } header: {
+                        Text("Shazam")
+                    } footer: {
+                        Text(L10n.text("This is the recognition record. Later edits may change the tags in your file.", "此处显示识别时的记录，后续编辑可能改变文件中的标签。"))
+                    }
+                }
+                if let metadata = attribution.appleMusicMetadata {
+                    Section {
+                        metadataRow("catalogID", L10n.text("Song ID", "歌曲标识"), metadata.id)
+                        metadataRow("album", L10n.text("Album", "专辑"), metadata.albumTitle)
+                        metadataRow("albumArtist", L10n.text("Album artist", "专辑艺术家"), metadata.albumArtist)
+                        metadataRow("releaseDate", L10n.text("Release date", "发行日期"), metadata.releaseDate.map {
+                            String(ISO8601DateFormatter().string(from: $0).prefix(10))
+                        })
+                        metadataRow("trackNumber", L10n.text("Track", "曲序"), metadata.trackNumber.map(String.init))
+                        metadataRow("discNumber", L10n.text("Disc", "碟号"), metadata.discNumber.map(String.init))
+                    } header: {
+                        Text("Apple Music")
+                    } footer: {
+                        Text(L10n.text("The date, track and disc describe this Apple Music edition. They may differ from the original release or your physical disc.", "日期、曲序及碟号属于此 Apple Music 发行版本，可能与最初发行版本或实体唱片不同。"))
+                    }
+                }
+            }
+            .navigationTitle(L10n.text("Recognition details", "识别详情"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(L10n.text("Done", "完成")) { dismiss() }
+                        .accessibilityIdentifier("shazamMetadataDetailsDoneButton")
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func metadataRow(_ key: String, _ label: String, _ value: String?) -> some View {
+        if let value, !value.isEmpty {
+            LabeledContent(label, value: value)
+                .textSelection(.enabled)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(label)
+                .accessibilityValue(value)
+                .accessibilityIdentifier("shazamMetadata_\(key)")
+        }
     }
 }
 
@@ -246,6 +309,20 @@ private struct MetadataCandidateRow: View {
         guard let score = candidate.score, score.isFinite, (0...1).contains(score) else { return nil }
         // Truncate instead of rounding a sub-threshold score up to 90%.
         return String(format: "%.2f%%", (score * 10_000).rounded(.down) / 100)
+    }
+
+    private var editionDetails: String {
+        var parts: [String] = []
+        if !candidate.tags.year.isEmpty {
+            parts.append(L10n.text("Year \(candidate.tags.year)", "年份 \(candidate.tags.year)"))
+        }
+        if !candidate.tags.discNumber.isEmpty {
+            parts.append(L10n.text("Disc \(candidate.tags.discNumber)", "碟号 \(candidate.tags.discNumber)"))
+        }
+        if !candidate.tags.trackNumber.isEmpty {
+            parts.append(L10n.text("Track \(candidate.tags.trackNumber)", "曲序 \(candidate.tags.trackNumber)"))
+        }
+        return parts.joined(separator: " · ")
     }
 
     var body: some View {
@@ -261,8 +338,15 @@ private struct MetadataCandidateRow: View {
                 if !candidate.tags.album.isEmpty {
                     Text(candidate.tags.album).font(.subheadline).foregroundStyle(.primary)
                 }
+                if !editionDetails.isEmpty {
+                    Text(editionDetails).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                }
                 if !candidate.detail.isEmpty {
                     Text(candidate.detail).font(.caption).foregroundStyle(.secondary)
+                }
+                if let notice = candidate.supplementationNotice, !notice.isEmpty {
+                    Text(notice).font(.caption).foregroundStyle(.secondary)
+                        .accessibilityIdentifier("metadataSupplementationNotice_\(candidate.id)")
                 }
                 if let similarity {
                     Text(L10n.text("Fingerprint similarity \(similarity)", "指纹相似度 \(similarity)"))
@@ -283,43 +367,6 @@ private struct MetadataCandidateRow: View {
                 .accessibilityHidden(true)
         }
         .padding(.vertical, 3)
-    }
-}
-
-private struct MetadataSearchSheet: View {
-    @EnvironmentObject private var model: AppModel
-    @Environment(\.dismiss) private var dismiss
-    let documentID: UUID
-    @State var title: String
-    @State var artist: String
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    TextField(L10n.text("Title", "歌名"), text: $title)
-                    TextField(L10n.text("Artist (optional)", "艺术家（可选）"), text: $artist)
-                } footer: {
-                    Text(L10n.text("Search titles and artists on MusicBrainz. No API key needed.", "将歌名和艺术家发送至 MusicBrainz 搜索，无需 API Key。"))
-                }
-            }
-            .autocorrectionDisabled()
-            .navigationTitle(L10n.text("Search metadata", "搜索元数据"))
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(L10n.text("Cancel", "取消")) { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(L10n.text("Search", "搜索")) {
-                        model.search(documentID, title: title, artist: artist)
-                        dismiss()
-                    }
-                    .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-            }
-        }
-        .presentationDetents([.medium, .large])
     }
 }
 

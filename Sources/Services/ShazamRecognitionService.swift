@@ -2,7 +2,9 @@ import AVFoundation
 import Foundation
 import ShazamKit
 
-struct ShazamRecognitionResult: Equatable, Sendable {
+/// A value snapshot of public Shazam metadata. Keep service details alongside the
+/// editable tags: an item's creation date, for example, is not a release date.
+struct ShazamRecognitionResult: Codable, Equatable, Sendable {
     var id: String
     var title: String
     var artist: String
@@ -10,6 +12,20 @@ struct ShazamRecognitionResult: Equatable, Sendable {
     var isrc: String? = nil
     var artworkURL: URL? = nil
     var appleMusicURL: URL? = nil
+    var subtitle: String? = nil
+    var appleMusicID: String? = nil
+    var webURL: URL? = nil
+    var videoURL: URL? = nil
+    var explicitContent: Bool? = nil
+    var creationDate: Date? = nil
+    var mediaItemID: UUID? = nil
+    var timeRanges: [Range<TimeInterval>] = []
+    var frequencySkewRanges: [Range<Float>] = []
+    var matchOffset: TimeInterval? = nil
+    var frequencySkew: Float? = nil
+    // This is a snapshot at recognition time, not a continuously updated playhead.
+    var predictedCurrentMatchOffset: TimeInterval? = nil
+    var confidence: Float? = nil
 }
 
 /// Matches signatures generated from an already staged local file. Never uses the microphone.
@@ -156,10 +172,31 @@ enum ShazamRecognitionService {
         return mediaItems.compactMap { item in
             guard let id = nonempty(item.shazamID), let title = nonempty(item.title),
                   seen.insert(id).inserted else { return nil }
+            let matched = item as? SHMatchedMediaItem
+            var confidence: Float?
+            if #available(iOS 18.4, *) {
+                let value = (item[.confidence] as? NSNumber)?.floatValue ?? matched?.confidence
+                if let value, value.isFinite, (0...1).contains(value) { confidence = value }
+            }
+            let creationDate = item.creationDate.flatMap { $0.timeIntervalSinceReferenceDate.isFinite ? $0 : nil }
             return ShazamRecognitionResult(id: id, title: title, artist: nonempty(item.artist) ?? "",
                 genres: item.genres.compactMap(nonempty), isrc: nonempty(item.isrc),
-                artworkURL: secureURL(item.artworkURL), appleMusicURL: secureURL(item.appleMusicURL))
+                artworkURL: secureURL(item.artworkURL), appleMusicURL: secureURL(item.appleMusicURL),
+                subtitle: nonempty(item.subtitle), appleMusicID: nonempty(item.appleMusicID),
+                webURL: secureURL(item.webURL), videoURL: secureURL(item.videoURL),
+                explicitContent: (item[.explicitContent] as? NSNumber)?.boolValue,
+                creationDate: creationDate, mediaItemID: item.id,
+                timeRanges: item.timeRanges.filter { $0.lowerBound.isFinite && $0.upperBound.isFinite },
+                frequencySkewRanges: item.frequencySkewRanges.filter { $0.lowerBound.isFinite && $0.upperBound.isFinite },
+                matchOffset: finite((item[.matchOffset] as? NSNumber)?.doubleValue ?? matched?.matchOffset),
+                frequencySkew: finite((item[.frequencySkew] as? NSNumber)?.floatValue ?? matched?.frequencySkew),
+                predictedCurrentMatchOffset: finite(matched?.predictedCurrentMatchOffset), confidence: confidence)
         }
+    }
+
+    private static func finite<T: BinaryFloatingPoint>(_ value: T?) -> T? {
+        guard let value, value.isFinite else { return nil }
+        return value
     }
 
     private static func nonempty(_ text: String?) -> String? {
@@ -174,8 +211,8 @@ enum ShazamRecognitionService {
     }
 
     private static func insufficientAudio() -> MusTagError {
-        .message(L10n.text("Not enough audible audio for ShazamKit. Try a longer file or search by title.",
-                           "可识别的音频过短或为静音，请尝试更长的文件或按歌名搜索。"))
+        .message(L10n.text("Not enough audible audio for ShazamKit. Try a longer file or edit the tags manually.",
+                           "可识别的音频过短或为静音，请尝试更长的文件或手动编辑标签。"))
     }
 
     static func recognitionError(_ error: Error) -> Error {
@@ -185,8 +222,8 @@ enum ShazamRecognitionService {
         }
         let message: String
         if nsError.domain == SHErrorDomain && [100, 101, 200, 201].contains(nsError.code) {
-            message = L10n.text("ShazamKit could not use this audio signature. Try another file or search by title.",
-                                "ShazamKit 无法使用此音频签名，请尝试其他文件或按歌名搜索。")
+            message = L10n.text("ShazamKit could not use this audio signature. Try another file or edit the tags manually.",
+                                "ShazamKit 无法使用此音频签名，请尝试其他文件或手动编辑标签。")
         } else {
             message = L10n.text(
                 "ShazamKit could not complete recognition. Check your connection. For a development build, enable ShazamKit for this App ID in your Apple Developer account and check signing.",

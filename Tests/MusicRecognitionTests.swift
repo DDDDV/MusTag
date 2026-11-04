@@ -1,69 +1,13 @@
 import XCTest
+import MusicKit
 @testable import MusTag
 
 final class MusicRecognitionTests: XCTestCase {
     private let recordingID = "10000000-0000-0000-0000-000000000001"
-    private let releaseID = "20000000-0000-0000-0000-000000000001"
 
     override func tearDown() {
         RecognitionURLProtocol.reset()
         super.tearDown()
-    }
-
-    func testRecordingKeepsReleaseEditionsSeparateAndPreservesArtistCredit() throws {
-        let data = Data("""
-        {"id":"\(recordingID)","title":"Song","length":123400,
-         "artist-credit":[{"name":"A","joinphrase":" feat. "},{"artist":{"name":"B"}}],
-         "releases":[
-           {"id":"\(releaseID)","title":"Original","date":"1999-08-01","country":"GB"},
-           {"id":"20000000-0000-0000-0000-000000000002","title":"Reissue","date":"2025","disambiguation":"remaster"}
-         ]}
-        """.utf8)
-        let recording = try JSONDecoder().decode(MBRecording.self, from: data)
-        let candidates = MusicRecognitionService.candidates(from: recording, fingerprintScore: 0.91)
-        XCTAssertEqual(candidates.count, 2)
-        XCTAssertNotEqual(candidates[0].id, candidates[1].id)
-        XCTAssertEqual(candidates[0].tags.artist, "A feat. B")
-        XCTAssertEqual(candidates[0].tags.year, "1999")
-        XCTAssertEqual(candidates[1].tags.year, "2025")
-        XCTAssertEqual(candidates[0].duration, 123.4)
-        XCTAssertEqual(candidates[0].tags.trackNumber, "")
-        XCTAssertEqual(candidates[0].tags.albumArtist, "")
-    }
-
-    func testReleaseResolutionDoesNotGuessDuplicateTrackPosition() throws {
-        let release = try JSONDecoder().decode(MBRelease.self, from: Data("""
-        {"id":"\(releaseID)","title":"Box set","date":"2024-06-01", "media":[
-         {"position":1,"tracks":[{"position":2,"recording":{"id":"\(recordingID)"}}]},
-         {"position":2,"tracks":[{"position":7,"recording":{"id":"\(recordingID)"}}]}
-        ]}
-        """.utf8))
-        let candidate = MetadataCandidate(id: "candidate", recordingID: recordingID, releaseID: releaseID,
-            tags: AudioTags(title: "Song"), detail: "MusicBrainz")
-        let resolved = MusicRecognitionService.resolve(candidate, with: release)
-        XCTAssertEqual(resolved.tags.album, "Box set")
-        XCTAssertEqual(resolved.tags.trackNumber, "")
-        XCTAssertEqual(resolved.tags.discNumber, "")
-        XCTAssertNotEqual(resolved.detail, candidate.detail)
-    }
-
-    func testReleaseResolutionUsesTrackCreditAndExactDiscPosition() throws {
-        let release = try JSONDecoder().decode(MBRelease.self, from: Data("""
-        {"id":"\(releaseID)","title":"Album","date":"2001-06-01",
-         "artist-credit":[{"name":"Various Artists"}],"media":[
-         {"position":2,"tracks":[{"position":7,"title":"Release title","length":200000,
-           "artist-credit":[{"name":"Track Artist"}],"recording":{"id":"\(recordingID)"}}]}
-        ]}
-        """.utf8))
-        let candidate = MetadataCandidate(id: "candidate", recordingID: recordingID, releaseID: releaseID,
-            tags: AudioTags(title: "Recording title", artist: "Recording Artist"), detail: "MusicBrainz")
-        let resolved = MusicRecognitionService.resolve(candidate, with: release)
-        XCTAssertEqual(resolved.tags.title, "Release title")
-        XCTAssertEqual(resolved.tags.artist, "Track Artist")
-        XCTAssertEqual(resolved.tags.albumArtist, "Various Artists")
-        XCTAssertEqual(resolved.tags.trackNumber, "7")
-        XCTAssertEqual(resolved.tags.discNumber, "2")
-        XCTAssertEqual(resolved.duration, 200)
     }
 
     func testAcoustIDMatchesDeduplicateRecordingAndRetainHighestScore() throws {
@@ -100,31 +44,6 @@ final class MusicRecognitionTests: XCTestCase {
             return XCTFail("A unique highest score must win")
         }
         XCTAssertEqual(selected.id, "highest")
-    }
-
-    func testAutomaticMatchUsesNormalizedOriginalAlbumOnlyWithinHighestScoreTie() {
-        let candidates = [candidate("other", score: 0.95, album: "Other Album"),
-                          candidate("matching", score: 0.95, album: "  Original   Album  "),
-                          candidate("lower", score: 0.92, album: "Original Album")]
-        guard case .selected(let selected) = MusicRecognitionService.automaticMatch(from: candidates, originalAlbum: "\nORIGINAL\t Album\n") else {
-            return XCTFail("Whitespace and case differences must not prevent an exact album match")
-        }
-        XCTAssertEqual(selected.id, "matching")
-    }
-
-    func testAutomaticMatchDoesNotBreakTiesWithMissingFuzzyOrNonuniqueAlbum() {
-        let candidates = [candidate("deluxe", score: 0.97, album: "Album (Deluxe)"),
-                          candidate("other", score: 0.97, album: "Other Album")]
-        for album in ["", " \n\t", "Album", "Missing Album"] {
-            guard case .ambiguous = MusicRecognitionService.automaticMatch(from: candidates, originalAlbum: album) else {
-                return XCTFail("Unresolved highest-score editions must remain ambiguous: \(album)")
-            }
-        }
-        let matchingEditions = [candidate("edition-a", score: 0.97, album: "Album"),
-                                candidate("edition-b", score: 0.97, album: " ALBUM ")]
-        guard case .ambiguous = MusicRecognitionService.automaticMatch(from: matchingEditions, originalAlbum: "Album") else {
-            return XCTFail("The original album cannot choose between two matching editions")
-        }
     }
 
     func testAutomaticMatchNeverChoosesLowerScoringAlbumToResolveTopTie() {
@@ -166,27 +85,6 @@ final class MusicRecognitionTests: XCTestCase {
         XCTAssertEqual(selected.id, repeated.id)
     }
 
-    func testAllReturnedReleaseEditionsParticipateInAutomaticSelection() {
-        let releases = (1...13).map { index in
-            MBRelease(id: "release-\(index)", title: index == 13 ? "Existing Album" : "Edition \(index)")
-        }
-        let recording = MBRecording(id: recordingID, title: "Song", releases: releases)
-        let candidates = MusicRecognitionService.candidates(from: recording, fingerprintScore: 0.96)
-        XCTAssertEqual(candidates.count, 13)
-        guard case .selected(let selected) = MusicRecognitionService.automaticMatch(from: candidates, originalAlbum: "Existing Album") else {
-            return XCTFail("An album beyond the former twelve-edition limit must remain selectable")
-        }
-        XCTAssertEqual(selected.releaseID, "release-13")
-
-        var additionalEdition = releases[12]
-        additionalEdition.id = "release-14"
-        let ambiguousRecording = MBRecording(id: recordingID, title: "Song", releases: releases + [additionalEdition])
-        let ambiguous = MusicRecognitionService.candidates(from: ambiguousRecording, fingerprintScore: 0.96)
-        guard case .ambiguous = MusicRecognitionService.automaticMatch(from: ambiguous, originalAlbum: "Existing Album") else {
-            return XCTFail("A later duplicate album edition must prevent a false unique match")
-        }
-    }
-
     func testRecordingMatchesUseIDToOrderEqualScores() {
         let firstID = "10000000-0000-0000-0000-000000000001"
         let secondID = "10000000-0000-0000-0000-000000000002"
@@ -194,91 +92,6 @@ final class MusicRecognitionTests: XCTestCase {
             AcoustIDResult(score: 0.95, recordings: [AcoustIDRecording(id: secondID), AcoustIDRecording(id: firstID)])
         ])
         XCTAssertEqual(MusicRecognitionService.recordingMatches(from: response).map(\.id), [firstID, secondID])
-    }
-
-    func testIdentifyPreservesTiedRecordingsBeyondFiveBeforeChoosingAnAlbum() async throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let source = directory.appendingPathComponent("sample.mp3")
-        try Data("fixture".utf8).write(to: source)
-        let ids = (1...6).map { "10000000-0000-0000-0000-\(String(format: "%012d", $0))" }
-        RecognitionURLProtocol.handler = { request in
-            if request.url?.host == "api.acoustid.org" {
-                let results = ids.reversed().map { ["id": $0, "title": "Song"] }
-                return (200, try JSONSerialization.data(withJSONObject: [
-                    "status": "ok", "results": [["score": 0.95, "recordings": results]]
-                ]))
-            }
-            let id = try XCTUnwrap(request.url?.lastPathComponent)
-            let album = id == ids.first || id == ids.last ? "Existing Album" : "Other \(id)"
-            return (200, try JSONSerialization.data(withJSONObject: [
-                "id": id, "title": "Song", "releases": [["id": "release-\(id)", "title": album]]
-            ]))
-        }
-        let service = MusicRecognitionService(session: session(), minimumMusicBrainzInterval: 0,
-            minimumAcoustIDInterval: 0, fingerprintProvider: { _ in ("fingerprint", 120) })
-        let candidates = try await service.identify(url: source, apiKey: "key")
-        XCTAssertEqual(candidates.map(\.recordingID), ids)
-        guard case .ambiguous = MusicRecognitionService.automaticMatch(from: candidates, originalAlbum: "Existing Album") else {
-            return XCTFail("The sixth tied recording must prevent the first album from appearing unique")
-        }
-    }
-
-    func testIncompleteReleaseLookupCannotResolveTopTieButAllowsUniquePartialMatch() async throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let source = directory.appendingPathComponent("sample.mp3")
-        try Data("fixture".utf8).write(to: source)
-        let completeID = recordingID
-        let partialID = "10000000-0000-0000-0000-000000000002"
-        let release = releaseID
-        RecognitionURLProtocol.handler = { request in
-            if request.url?.host == "api.acoustid.org" {
-                return (200, try JSONSerialization.data(withJSONObject: [
-                    "status": "ok", "results": [["score": 0.96, "recordings": [
-                        ["id": completeID, "title": "Complete song"],
-                        ["id": partialID, "title": "Partial song"]
-                    ]]]
-                ]))
-            }
-            if request.url?.lastPathComponent == partialID { return (500, Data()) }
-            return (200, try JSONSerialization.data(withJSONObject: [
-                "id": completeID, "title": "Complete song",
-                "releases": [["id": release, "title": "Existing Album"]]
-            ]))
-        }
-        let service = MusicRecognitionService(session: session(), minimumMusicBrainzInterval: 0,
-            minimumAcoustIDInterval: 0, fingerprintProvider: { _ in ("fingerprint", 120) })
-        let candidates = try await service.identify(url: source, apiKey: "key")
-        XCTAssertEqual(candidates.count, 2)
-        let complete = try XCTUnwrap(candidates.first { $0.recordingID == completeID })
-        let partial = try XCTUnwrap(candidates.first { $0.recordingID == partialID })
-        XCTAssertFalse(complete.hasIncompleteReleaseInfo)
-        XCTAssertTrue(partial.hasIncompleteReleaseInfo)
-        XCTAssertEqual(partial.tags.title, "Partial song")
-        guard case .ambiguous = MusicRecognitionService.automaticMatch(from: candidates, originalAlbum: "Existing Album") else {
-            return XCTFail("An unavailable edition list cannot prove a unique album match")
-        }
-        guard case .selected(let selected) = MusicRecognitionService.automaticMatch(from: [partial], originalAlbum: "Existing Album") else {
-            return XCTFail("A unique highest recording can still supply its partial title and artist")
-        }
-        XCTAssertEqual(selected.id, partial.id)
-    }
-
-    func testTextSearchResultsHaveNoFingerprintScoreAndCannotAutomaticallyMatch() async throws {
-        let id = recordingID
-        RecognitionURLProtocol.handler = { _ in
-            (200, Data("{\"recordings\":[{\"id\":\"\(id)\",\"title\":\"Song\",\"score\":100}]}".utf8))
-        }
-        let service = MusicRecognitionService(session: session(), minimumMusicBrainzInterval: 0)
-        let candidates = try await service.search(title: "Song", artist: "")
-        XCTAssertEqual(candidates.count, 1)
-        XCTAssertNil(candidates.first?.score)
-        guard case .noMatch = MusicRecognitionService.automaticMatch(from: candidates, originalAlbum: "") else {
-            return XCTFail("MusicBrainz text relevance is not a fingerprint score")
-        }
     }
 
     func testMissingKeyDoesNotTouchAudioOrNetwork() async {
@@ -293,22 +106,6 @@ final class MusicRecognitionTests: XCTestCase {
             XCTAssertTrue(error.localizedDescription.contains("API"))
         }
         XCTAssertEqual(RecognitionURLProtocol.requestCount, 0)
-    }
-
-    func testSearchEscapesUserQueryAndCachesResults() async throws {
-        RecognitionURLProtocol.handler = { request in
-            let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(request.url), resolvingAgainstBaseURL: false))
-            let query = components.queryItems?.first { $0.name == "query" }?.value
-            XCTAssertEqual(query, #"recording:"A \"title\"" AND artist:"AC\/DC""#)
-            XCTAssertNotNil(request.value(forHTTPHeaderField: "User-Agent"))
-            return (200, Data("{\"recordings\":[]}".utf8))
-        }
-        let service = MusicRecognitionService(session: session(), minimumMusicBrainzInterval: 0)
-        let first = try await service.search(title: "A \"title\"", artist: "AC/DC")
-        let second = try await service.search(title: "A \"title\"", artist: "AC/DC")
-        XCTAssertTrue(first.isEmpty)
-        XCTAssertTrue(second.isEmpty)
-        XCTAssertEqual(RecognitionURLProtocol.requestCount, 1)
     }
 
     func testFingerprintIsPostedWithoutAudioOrKeyInURL() async throws {
@@ -336,17 +133,6 @@ final class MusicRecognitionTests: XCTestCase {
             })
         let results = try await service.identify(url: source, apiKey: "private-key")
         XCTAssertTrue(results.isEmpty)
-    }
-
-    func testInvalidJSONReturnsReadableError() async {
-        RecognitionURLProtocol.handler = { _ in (200, Data("not json".utf8)) }
-        let service = MusicRecognitionService(session: session(), minimumMusicBrainzInterval: 0)
-        do {
-            _ = try await service.search(title: "Song", artist: "")
-            XCTFail("Expected a response error")
-        } catch {
-            XCTAssertFalse(error.localizedDescription.contains("DecodingError"))
-        }
     }
 
     func testHTTP400InvalidKeyExplainsApplicationKeyWithoutRetrying() async throws {
@@ -421,39 +207,6 @@ final class MusicRecognitionTests: XCTestCase {
         XCTAssertFalse(message.contains(L10n.text("unavailable", "暂不可用")))
     }
 
-    func testShazamUsesStagedFileWithoutKeyOrOtherRecognitionServices() async throws {
-        let source = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mp3")
-        try Data("local audio".utf8).write(to: source)
-        defer { try? FileManager.default.removeItem(at: source) }
-        let captured = ShazamStagedFile()
-        let service = MusicRecognitionService(session: session(), fingerprintProvider: { _ in
-            XCTFail("Shazam must not call Chromaprint")
-            return ("", 0)
-        }, shazamProvider: { staged in
-            await captured.record(staged)
-            XCTAssertNotEqual(staged, source)
-            XCTAssertEqual(try Data(contentsOf: staged), Data("local audio".utf8))
-            return [ShazamRecognitionResult(id: "123", title: "Song", artist: "Artist", genres: ["Pop"],
-                isrc: "USAAA2600001", artworkURL: URL(string: "https://is1-ssl.mzstatic.com/cover.jpg"),
-                appleMusicURL: URL(string: "https://music.apple.com/us/song/song/123"))]
-        })
-        let matches = try await service.identify(url: source, apiKey: "", provider: .shazamKit)
-        let match = try XCTUnwrap(matches.first)
-        XCTAssertEqual(match.id, "shazam:123")
-        XCTAssertEqual(match.source, .shazamKit)
-        XCTAssertNil(match.recordingID)
-        XCTAssertNil(match.releaseID)
-        XCTAssertNil(match.score, "Shazam must never be assigned a synthetic fingerprint percentage")
-        XCTAssertEqual(match.tags.genre, L10n.text("Pop", "流行"))
-        XCTAssertTrue(match.tags.album.isEmpty)
-        XCTAssertNotNil(match.appleMusicURL)
-        let resolved = try await service.resolve(match)
-        XCTAssertEqual(resolved.id, match.id)
-        XCTAssertEqual(RecognitionURLProtocol.requestCount, 0)
-        let staged = await captured.url
-        XCTAssertFalse(FileManager.default.fileExists(atPath: try XCTUnwrap(staged).deletingLastPathComponent().path))
-    }
-
     func testShazamFailureRemovesStagedFile() async throws {
         let source = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mp3")
         try Data("local audio".utf8).write(to: source)
@@ -470,21 +223,6 @@ final class MusicRecognitionTests: XCTestCase {
         let staged = await captured.url
         XCTAssertFalse(FileManager.default.fileExists(atPath: try XCTUnwrap(staged).deletingLastPathComponent().path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
-    }
-
-    func testShazamDropsEmptyResultsAndRejectsUntrustedAppleMusicLinks() async throws {
-        let source = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mp3")
-        try Data().write(to: source)
-        defer { try? FileManager.default.removeItem(at: source) }
-        let service = MusicRecognitionService(shazamProvider: { _ in
-            let result = ShazamRecognitionResult(id: "123", title: "Song", artist: "Artist", genres: [],
-                isrc: nil, artworkURL: nil, appleMusicURL: URL(string: "https://music.apple.com.example.org/song/123"))
-            return [result, result, ShazamRecognitionResult(id: "456", title: "  ", artist: "", genres: [],
-                isrc: nil, artworkURL: nil, appleMusicURL: nil)]
-        })
-        let matches = try await service.identify(url: source, apiKey: "", provider: .shazamKit)
-        XCTAssertEqual(matches.count, 1)
-        XCTAssertNil(matches.first?.appleMusicURL)
     }
 
     func testShazamAutomaticChoiceDoesNotUseAcoustIDThresholdOrAlbumPreference() {
@@ -537,9 +275,363 @@ final class MusicRecognitionTests: XCTestCase {
         }
     }
 
+    func testAcoustIDReturnsItsOwnMetadataWithoutSecondaryRequests() async throws {
+        let id = recordingID
+        RecognitionURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.host, "api.acoustid.org")
+            return (200, Data("""
+            {"status":"ok","results":[{"score":0.96,"recordings":[
+             {"id":"\(id)","title":"Recognized title","duration":123.4,
+              "artists":[{"name":"First artist"},{"name":"Second artist"}]}]}]}
+            """.utf8))
+        }
+        let service = MusicRecognitionService(session: session(), minimumAcoustIDInterval: 0,
+            fingerprintProvider: { _ in ("fingerprint", 120) }, appleMusicProvider: { _ in
+                XCTFail("AcoustID must not query Apple Music")
+                return nil
+            })
+        let source = try temporaryAudio()
+        defer { try? FileManager.default.removeItem(at: source) }
+        let matches = try await service.identify(url: source, apiKey: "key")
+        let match = try XCTUnwrap(matches.first)
+        XCTAssertEqual(matches.count, 1)
+        XCTAssertEqual(match.tags.title, "Recognized title")
+        XCTAssertEqual(match.tags.artist, "First artist, Second artist")
+        XCTAssertEqual(match.duration, 123.4)
+        XCTAssertEqual(match.score, 0.96)
+        XCTAssertEqual(match.source, .acoustID)
+        XCTAssertTrue(match.tags.album.isEmpty)
+        XCTAssertTrue(match.tags.year.isEmpty)
+        XCTAssertTrue(match.tags.trackNumber.isEmpty)
+        XCTAssertTrue(match.tags.discNumber.isEmpty)
+        XCTAssertNil(match.artworkURL)
+        XCTAssertEqual(RecognitionURLProtocol.requestCount, 1)
+    }
+
+    func testAcoustIDPreservesAllTiedRecordingsAndDoesNotChooseByAlbum() async throws {
+        let ids = (1...6).map { "10000000-0000-0000-0000-\(String(format: "%012d", $0))" }
+        RecognitionURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.host, "api.acoustid.org")
+            return (200, try JSONSerialization.data(withJSONObject: [
+                "status": "ok", "results": [["score": 0.95, "recordings": ids.reversed().map {
+                    ["id": $0, "title": "Song"]
+                }]]
+            ]))
+        }
+        let service = MusicRecognitionService(session: session(), minimumAcoustIDInterval: 0,
+            fingerprintProvider: { _ in ("fingerprint", 120) })
+        let source = try temporaryAudio()
+        defer { try? FileManager.default.removeItem(at: source) }
+        let matches = try await service.identify(url: source, apiKey: "key")
+        XCTAssertEqual(matches.count, 6)
+        guard case .ambiguous = MusicRecognitionService.automaticMatch(from: matches, originalAlbum: "Existing") else {
+            return XCTFail("Tied recording identities require manual selection")
+        }
+        XCTAssertEqual(RecognitionURLProtocol.requestCount, 1)
+    }
+
+    func testInvalidJSONReturnsReadableError() async throws {
+        let message = try await identificationError(status: 200, body: "not json")
+        XCTAssertFalse(message.contains("DecodingError"))
+        XCTAssertFalse(message.contains("not json"))
+    }
+
+    func testShazamStagesLocalAudioAndDoesNotQueryWithoutCatalogID() async throws {
+        let source = try temporaryAudio()
+        defer { try? FileManager.default.removeItem(at: source) }
+        let captured = ShazamStagedFile()
+        let service = MusicRecognitionService(session: session(), fingerprintProvider: { _ in
+            XCTFail("Shazam must not invoke fingerprinting for AcoustID")
+            return ("", 0)
+        }, shazamProvider: { staged in
+            await captured.record(staged)
+            XCTAssertNotEqual(staged, source)
+            XCTAssertEqual(try Data(contentsOf: staged), try Data(contentsOf: source))
+            return [.init(id: "123", title: "Song", artist: "Artist", genres: ["Pop"],
+                          appleMusicURL: URL(string: "https://music.apple.com/us/song/123"))]
+        }, appleMusicProvider: { _ in
+            XCTFail("Without an Apple Music ID the service must keep the basic match")
+            return nil
+        })
+        let matches = try await service.identify(url: source, apiKey: "", provider: .shazamKit)
+        let match = try XCTUnwrap(matches.first)
+        XCTAssertEqual(matches.count, 1)
+        XCTAssertEqual(match.id, "shazam:123")
+        XCTAssertEqual(match.source, .shazamKit)
+        XCTAssertNil(match.score)
+        XCTAssertEqual(match.tags.genre, L10n.text("Pop", "流行"))
+        XCTAssertTrue(match.tags.album.isEmpty)
+        XCTAssertNotNil(match.appleMusicURL)
+        XCTAssertNotNil(match.supplementationNotice)
+        XCTAssertEqual(RecognitionURLProtocol.requestCount, 0)
+        let staged = await captured.url
+        XCTAssertFalse(FileManager.default.fileExists(atPath: try XCTUnwrap(staged).deletingLastPathComponent().path))
+    }
+
+    func testShazamDropsEmptyAndDuplicateMatchesAndUntrustedLinks() async throws {
+        let service = MusicRecognitionService(session: session(), shazamProvider: { _ in
+            let result = ShazamRecognitionResult(id: "123", title: "Song", artist: "Artist",
+                appleMusicURL: URL(string: "https://music.apple.com.example.org/song/123"))
+            return [result, result, .init(id: "456", title: "  ", artist: "")]
+        }, appleMusicProvider: { _ in
+            XCTFail("No valid catalog ID was returned")
+            return nil
+        })
+        let matches = try await identifyShazam(using: service)
+        XCTAssertEqual(matches.count, 1)
+        XCTAssertNil(matches.first?.appleMusicURL)
+        XCTAssertEqual(RecognitionURLProtocol.requestCount, 0)
+    }
+
+    func testAppleMusicCompletesEditionWithoutReplacingShazamPrimaryMetadata() async throws {
+        let shazam = ShazamRecognitionResult(id: "123", title: "Shazam title", artist: "Shazam artist",
+            genres: ["Pop"], isrc: "us-aaa-26-00001",
+            artworkURL: URL(string: "https://is1-ssl.mzstatic.com/shazam.jpg"), appleMusicID: "456")
+        let song = appleSong()
+        let matches = try await identifyShazam(using: shazamService(shazam) { id in
+            XCTAssertEqual(id, "456")
+            return song
+        })
+        XCTAssertEqual(matches.count, 2)
+        let edition = try XCTUnwrap(matches.first { $0.appleMusicMetadata != nil })
+        XCTAssertEqual(edition.tags.title, shazam.title)
+        XCTAssertEqual(edition.tags.artist, shazam.artist)
+        XCTAssertEqual(edition.tags.genre, L10n.text("Pop", "流行"))
+        XCTAssertEqual(edition.tags.album, "Catalog album")
+        XCTAssertEqual(edition.tags.albumArtist, "Album artist")
+        XCTAssertEqual(edition.tags.year, "1998")
+        XCTAssertEqual(edition.tags.trackNumber, "7")
+        XCTAssertEqual(edition.tags.discNumber, "2")
+        XCTAssertEqual(edition.duration, 210)
+        XCTAssertEqual(edition.artworkURL, song.artworkURL, "The selected catalog edition supplies its own cover")
+        XCTAssertEqual(edition.appleMusicMetadata, song)
+        XCTAssertEqual(edition.shazamMetadata, shazam)
+        XCTAssertNil(edition.score)
+        XCTAssertEqual(RecognitionURLProtocol.requestCount, 0)
+    }
+
+    func testAppleMusicAutomaticSelectionRequiresCompatibleAlbum() async throws {
+        let song = appleSong()
+        let matches = try await identifyShazam(using: shazamService(catalogShazam()) { _ in song })
+        for album in ["", "  CATALOG\t album  "] {
+            guard case .selected(let selected) = MusicRecognitionService.automaticMatch(from: matches, originalAlbum: album) else {
+                return XCTFail("A compatible catalog album should supplement the unique song")
+            }
+            XCTAssertEqual(selected.appleMusicMetadata, song)
+        }
+        for album in ["Different edition", "Catalog album (Deluxe)"] {
+            guard case .selected(let selected) = MusicRecognitionService.automaticMatch(from: matches, originalAlbum: album) else {
+                return XCTFail("An incompatible edition must keep the basic Shazam match")
+            }
+            XCTAssertNil(selected.appleMusicMetadata)
+            XCTAssertTrue(selected.tags.album.isEmpty)
+            XCTAssertNotNil(selected.supplementationNotice)
+        }
+    }
+
+    func testMissingCatalogArtworkRetainsShazamArtwork() async throws {
+        let shazam = ShazamRecognitionResult(id: "123", title: "Shazam title", artist: "Shazam artist",
+            artworkURL: URL(string: "https://is1-ssl.mzstatic.com/shazam.jpg"), appleMusicID: "456")
+        var catalog = appleSong()
+        catalog.artworkURL = nil
+        let song = catalog
+        let matches = try await identifyShazam(using: shazamService(shazam) { _ in song })
+        XCTAssertEqual(matches.first { $0.appleMusicMetadata != nil }?.artworkURL, shazam.artworkURL)
+    }
+
+    func testAutomaticSelectionDeduplicatesAcoustIDUsingItsHighestScore() {
+        let duplicates = [candidate("same", score: 0.4), candidate("same", score: 0.98),
+                          candidate("other", score: 0.95)]
+        for matches in [duplicates, Array(duplicates.reversed())] {
+            guard case .selected(let selected) = MusicRecognitionService.automaticMatch(from: matches, originalAlbum: "") else {
+                return XCTFail("Duplicate identities must retain their highest fingerprint score")
+            }
+            XCTAssertEqual(selected.id, "same")
+            XCTAssertEqual(selected.score, 0.98)
+        }
+    }
+
+    func testAppleMusicMissingFieldsAndInvalidPositionsNeverInventReleaseData() async throws {
+        var song = AppleMusicSongMetadata(id: "456", title: "Catalog title", artist: "Catalog artist")
+        song.albumTitle = "Catalog album"
+        song.trackNumber = 0
+        song.discNumber = -2
+        var shazam = catalogShazam()
+        shazam.creationDate = Date(timeIntervalSince1970: 1_700_000_000)
+        let response = song
+        let matches = try await identifyShazam(using: shazamService(shazam) { _ in response })
+        let edition = try XCTUnwrap(matches.first { $0.appleMusicMetadata != nil })
+        XCTAssertTrue(edition.tags.year.isEmpty, "Shazam creationDate must not become the release year")
+        XCTAssertTrue(edition.tags.trackNumber.isEmpty)
+        XCTAssertTrue(edition.tags.discNumber.isEmpty)
+        XCTAssertTrue(edition.tags.albumArtist.isEmpty, "The song artist does not establish the album artist")
+    }
+
+    func testAppleMusicReleaseYearUsesUTCAndGregorianCalendar() async throws {
+        var song = appleSong()
+        song.releaseDate = ISO8601DateFormatter().date(from: "1999-12-31T23:59:59Z")!
+        let response = song
+        let matches = try await identifyShazam(using: shazamService(catalogShazam()) { _ in response })
+        XCTAssertEqual(matches.first { $0.appleMusicMetadata != nil }?.tags.year, "1999")
+    }
+
+    func testAppleMusicCanSupplyMissingArtistGenreAndCover() async throws {
+        var song = appleSong()
+        song.genres = ["Jazz"]
+        let shazam = ShazamRecognitionResult(id: "123", title: "Shazam title", artist: "", appleMusicID: "456")
+        let response = song
+        let matches = try await identifyShazam(using: shazamService(shazam) { _ in response })
+        let edition = try XCTUnwrap(matches.first { $0.appleMusicMetadata != nil })
+        XCTAssertEqual(edition.tags.artist, song.artist)
+        XCTAssertEqual(edition.tags.genre, L10n.text("Jazz", "爵士"))
+        XCTAssertEqual(edition.artworkURL, song.artworkURL)
+    }
+
+    func testAppleMusicRejectsWrongIDAndConflictingKnownRecording() async throws {
+        for mismatch in ["id", "isrc"] {
+            var song = appleSong()
+            if mismatch == "id" { song.id = "789" }
+            else { song.isrc = "USAAA2600002" }
+            let response = song
+            let matches = try await identifyShazam(using: shazamService(catalogShazam()) { _ in response })
+            XCTAssertEqual(matches.count, 1)
+            XCTAssertNil(matches.first?.appleMusicMetadata)
+            XCTAssertTrue(matches.first?.tags.album.isEmpty == true)
+            let notice = try XCTUnwrap(matches.first?.supplementationNotice)
+            XCTAssertTrue(notice.contains(mismatch == "id"
+                ? L10n.text("different song ID", "歌曲标识与请求不一致") : "ISRC"))
+        }
+        XCTAssertEqual(RecognitionURLProtocol.requestCount, 0)
+    }
+
+    func testAppleMusicFailureAndNoMatchKeepSuccessfulShazamRecognition() async throws {
+        let cases: [(@Sendable (String) async throws -> AppleMusicSongMetadata?, String)] = [
+            ({ _ in nil }, L10n.text("No exact match", "未找到与此歌曲标识完全一致")),
+            ({ _ in throw URLError(.notConnectedToInternet) }, "NSURLErrorDomain -1009"),
+            ({ _ in throw MusTagError.message("Authorization denied") }, "Authorization denied"),
+            ({ _ in throw MusicTokenRequestError.developerTokenRequestFailed }, "MusicKit developerTokenRequestFailed")
+        ]
+        for (provider, reason) in cases {
+            let matches = try await identifyShazam(using: shazamService(catalogShazam(), appleMusicProvider: provider))
+            XCTAssertEqual(matches.count, 1)
+            XCTAssertEqual(matches.first?.tags.title, "Shazam title")
+            XCTAssertNil(matches.first?.appleMusicMetadata)
+            let notice = try XCTUnwrap(matches.first?.supplementationNotice)
+            XCTAssertTrue(notice.contains(reason), notice)
+            XCTAssertTrue(notice.contains(L10n.text("Shazam tags were kept", "已保留 Shazam 标签")), notice)
+        }
+        XCTAssertEqual(RecognitionURLProtocol.requestCount, 0)
+    }
+
+    func testAppleMusicMissingAlbumHasDistinctReasonAndKeepsBasicMatch() async throws {
+        var catalog = appleSong()
+        catalog.albumTitle = " "
+        let response = catalog
+        let matches = try await identifyShazam(using: shazamService(catalogShazam()) { _ in response })
+        XCTAssertEqual(matches.count, 1)
+        XCTAssertEqual(matches.first?.tags.title, "Shazam title")
+        XCTAssertTrue(matches.first?.tags.album.isEmpty == true)
+        XCTAssertTrue(matches.first?.tags.year.isEmpty == true)
+        XCTAssertTrue(matches.first?.tags.trackNumber.isEmpty == true)
+        let notice = try XCTUnwrap(matches.first?.supplementationNotice)
+        XCTAssertTrue(notice.contains(L10n.text("no album name", "未返回专辑名称")))
+    }
+
+    func testAppleMusicUnknownFailureDoesNotExposeProviderDetailsInFallback() async throws {
+        let error = NSError(domain: "private-domain-secret-token", code: 5678,
+                            userInfo: [NSLocalizedDescriptionKey: "private-description secret-token"])
+        let matches = try await identifyShazam(using: shazamService(catalogShazam()) { _ in throw error })
+        XCTAssertEqual(matches.count, 1)
+        XCTAssertEqual(matches.first?.tags.title, "Shazam title")
+        let notice = try XCTUnwrap(matches.first?.supplementationNotice)
+        XCTAssertTrue(notice.contains("5678"))
+        XCTAssertFalse(notice.contains("private"))
+        XCTAssertFalse(notice.contains("secret"))
+    }
+
+    func testInvalidAppleMusicIDsDoNotReachProvider() async throws {
+        for id in ["", "../456", "456?storefront=us", "not-a-number", "0", "-456"] {
+            var shazam = catalogShazam()
+            shazam.appleMusicID = id
+            let matches = try await identifyShazam(using: shazamService(shazam) { _ in
+                XCTFail("Invalid catalog ID must not reach the provider: \(id)")
+                return nil
+            })
+            XCTAssertEqual(matches.count, 1)
+            let notice = try XCTUnwrap(matches.first?.supplementationNotice)
+            XCTAssertTrue(notice.contains(L10n.text("valid Apple Music song ID", "有效的 Apple Music 歌曲标识")))
+        }
+        XCTAssertEqual(RecognitionURLProtocol.requestCount, 0)
+    }
+
+    func testAppleMusicCancellationPropagatesInsteadOfApplyingPartialResult() async throws {
+        for error in [CancellationError() as Error, URLError(.cancelled)] {
+            do {
+                _ = try await identifyShazam(using: shazamService(catalogShazam()) { _ in throw error })
+                XCTFail("Cancelling catalog lookup must not apply partial tags")
+            } catch is CancellationError { }
+        }
+    }
+
+    func testDifferentShazamMatchesRemainAmbiguousDespiteCatalogAlbumPreference() async throws {
+        var second = catalogShazam()
+        second.id = "other-shazam-song"
+        second.appleMusicID = "789"
+        let first = catalogShazam()
+        let secondMatch = second
+        let song = appleSong()
+        let service = MusicRecognitionService(session: session(), shazamProvider: { _ in [first, secondMatch] },
+            appleMusicProvider: { id in
+                var response = song
+                response.id = id
+                return response
+            })
+        let matches = try await identifyShazam(using: service)
+        guard case .ambiguous = MusicRecognitionService.automaticMatch(from: matches, originalAlbum: "Catalog album") else {
+            return XCTFail("Album preference cannot choose between distinct Shazam identities")
+        }
+    }
+
     private func candidate(_ id: String, score: Double?, album: String = "") -> MetadataCandidate {
-        MetadataCandidate(id: id, recordingID: recordingID, releaseID: id,
-                          tags: AudioTags(title: "Song", album: album), score: score, detail: "")
+        MetadataCandidate(id: id, tags: AudioTags(title: "Song", album: album), score: score,
+                          detail: "", source: .acoustID)
+    }
+
+    private func catalogShazam() -> ShazamRecognitionResult {
+        .init(id: "123", title: "Shazam title", artist: "Shazam artist", isrc: "USAAA2600001", appleMusicID: "456")
+    }
+
+    private func appleSong() -> AppleMusicSongMetadata {
+        var song = AppleMusicSongMetadata(id: "456", title: "Catalog title", artist: "Catalog artist")
+        song.albumTitle = "Catalog album"
+        song.albumArtist = "Album artist"
+        song.releaseDate = ISO8601DateFormatter().date(from: "1998-04-05T00:00:00Z")!
+        song.trackNumber = 7
+        song.discNumber = 2
+        song.isrc = "USAAA2600001"
+        song.duration = 210
+        song.url = URL(string: "https://music.apple.com/us/song/456")
+        song.artworkURL = URL(string: "https://is1-ssl.mzstatic.com/catalog.jpg")
+        song.genres = ["Jazz"]
+        return song
+    }
+
+    private func shazamService(_ match: ShazamRecognitionResult,
+                              appleMusicProvider: @escaping @Sendable (String) async throws -> AppleMusicSongMetadata? = { _ in nil }) -> MusicRecognitionService {
+        MusicRecognitionService(session: session(), shazamProvider: { _ in [match] },
+                                appleMusicProvider: appleMusicProvider)
+    }
+
+    private func temporaryAudio() throws -> URL {
+        let source = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mp3")
+        try Data("local audio fixture".utf8).write(to: source)
+        return source
+    }
+
+    private func identifyShazam(using service: MusicRecognitionService) async throws -> [MetadataCandidate] {
+        let source = try temporaryAudio()
+        defer { try? FileManager.default.removeItem(at: source) }
+        return try await service.identify(url: source, apiKey: "", provider: .shazamKit)
     }
 
     private func identificationError(status: Int, body: String) async throws -> String {
@@ -549,13 +641,12 @@ final class MusicRecognitionTests: XCTestCase {
         let source = directory.appendingPathComponent("sample.mp3")
         try Data("private audio content".utf8).write(to: source)
         RecognitionURLProtocol.handler = { request in
-            XCTAssertEqual(request.url?.host, "api.acoustid.org", "Failed lookups must not continue to MusicBrainz")
+            XCTAssertEqual(request.url?.host, "api.acoustid.org", "Failed lookups must not query another provider")
             XCTAssertEqual(request.url?.path, "/v2/lookup")
             return (status, Data(body.utf8))
         }
         let initialRequestCount = RecognitionURLProtocol.requestCount
-        let service = MusicRecognitionService(session: session(), minimumMusicBrainzInterval: 0,
-            minimumAcoustIDInterval: 0, fingerprintProvider: { _ in ("test-fingerprint", 120.6) })
+        let service = MusicRecognitionService(session: session(), minimumAcoustIDInterval: 0, fingerprintProvider: { _ in ("test-fingerprint", 120.6) })
         do {
             _ = try await service.identify(url: source, apiKey: "private-key")
             XCTFail("Expected AcoustID lookup to fail")

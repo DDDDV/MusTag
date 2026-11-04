@@ -158,12 +158,90 @@ final class ShazamRecognitionTests: XCTestCase {
     func testMetadataDropsUnsafeURLsAndKeepsMissingArtistEmpty() {
         let media = SHMediaItem(properties: [
             .shazamID: "123", .title: "Song", .artworkURL: URL(string: "file:///private/test.jpg")!,
-            .appleMusicURL: URL(string: "https://user:secret@music.apple.com/123")!
+            .appleMusicURL: URL(string: "https://user:secret@music.apple.com/123")!,
+            .webURL: URL(string: "http://www.shazam.com/track/123")!,
+            .videoURL: URL(string: "https://user:secret@example.com/video")!
         ])
         let result = ShazamRecognitionService.results(from: [media]).first
         XCTAssertEqual(result?.artist, "")
         XCTAssertNil(result?.artworkURL)
         XCTAssertNil(result?.appleMusicURL)
+        XCTAssertNil(result?.webURL)
+        XCTAssertNil(result?.videoURL)
+        XCTAssertNil(result?.subtitle)
+        XCTAssertNil(result?.appleMusicID)
+        XCTAssertNil(result?.creationDate)
+        XCTAssertNil(result?.explicitContent, "An absent rating must remain unknown rather than become clean")
+        XCTAssertNil(result?.matchOffset)
+        XCTAssertNil(result?.frequencySkew)
+        XCTAssertNil(result?.predictedCurrentMatchOffset)
+        XCTAssertNil(result?.confidence)
+        XCTAssertEqual(result?.timeRanges, [])
+        XCTAssertEqual(result?.frequencySkewRanges, [])
+    }
+
+    func testAllPublicMediaMetadataSurvivesExtractionAndPersistence() throws {
+        let created = Date(timeIntervalSince1970: 1_730_000_000)
+        let timeRanges: [Range<TimeInterval>] = [1..<8, 12..<19]
+        let skewRanges: [Range<Float>] = [-0.05..<0.05]
+        let media = SHMediaItem(properties: [
+            .shazamID: "123", .title: "Song", .artist: "Artist", .subtitle: " Subtitle ",
+            .genres: ["Pop", "Rock"], .ISRC: "USAAA0000001", .appleMusicID: " 456 ",
+            .appleMusicURL: URL(string: "https://music.apple.com/us/song/456")!,
+            .artworkURL: URL(string: "https://is1-ssl.mzstatic.com/artwork.jpg")!,
+            .webURL: URL(string: "https://www.shazam.com/track/123")!,
+            .videoURL: URL(string: "https://example.com/music-video")!,
+            .explicitContent: true, .creationDate: created,
+            .timeRanges: timeRanges, .frequencySkewRanges: skewRanges,
+            .matchOffset: -0.5, .frequencySkew: Float(0.025)
+        ])
+        let result = try XCTUnwrap(ShazamRecognitionService.results(from: [media]).first)
+        XCTAssertEqual(result.subtitle, "Subtitle")
+        XCTAssertEqual(result.appleMusicID, "456")
+        XCTAssertEqual(result.webURL, media.webURL)
+        XCTAssertEqual(result.videoURL, media.videoURL)
+        XCTAssertEqual(result.explicitContent, true)
+        XCTAssertEqual(result.creationDate, created)
+        XCTAssertEqual(result.mediaItemID, media.id)
+        XCTAssertEqual(result.timeRanges, timeRanges)
+        XCTAssertEqual(result.frequencySkewRanges, skewRanges)
+        XCTAssertEqual(result.matchOffset, -0.5, "Negative offsets are valid when a query starts before the recognized recording")
+        XCTAssertEqual(result.frequencySkew, 0.025)
+        let persisted = try JSONEncoder().encode(result)
+        XCTAssertEqual(try JSONDecoder().decode(ShazamRecognitionResult.self, from: persisted), result)
+    }
+
+    func testPublicMatchPropertiesPreserveValuesAndConfidenceScale() throws {
+        var properties: [SHMediaItemProperty: Any] = [
+            .shazamID: "123", .title: "Song",
+            .matchOffset: -0.5, .frequencySkew: Float(0.05)
+        ]
+        if #available(iOS 18.4, *) { properties[.confidence] = Float(0.92) }
+        let media = SHMediaItem(properties: properties)
+        let result = try XCTUnwrap(ShazamRecognitionService.results(from: [media]).first)
+        XCTAssertEqual(result.matchOffset, -0.5)
+        XCTAssertEqual(result.frequencySkew, 0.05)
+        // A predicted playhead is available only on real SHMatchedMediaItem results.
+        // SHMediaItem's property factory does not construct a synthetic match subclass.
+        XCTAssertNil(result.predictedCurrentMatchOffset)
+        if #available(iOS 18.4, *) { XCTAssertEqual(result.confidence, 0.92) }
+        else { XCTAssertNil(result.confidence) }
+        XCTAssertEqual(try JSONDecoder().decode(ShazamRecognitionResult.self,
+                                               from: JSONEncoder().encode(result)), result)
+    }
+
+    func testNonfiniteMatchValuesAreDroppedSoResultsRemainPersistable() throws {
+        var properties: [SHMediaItemProperty: Any] = [
+            .shazamID: "123", .title: "Song", .explicitContent: false,
+            .matchOffset: Double.infinity, .frequencySkew: Float.nan
+        ]
+        if #available(iOS 18.4, *) { properties[.confidence] = Float(1.1) }
+        let result = try XCTUnwrap(ShazamRecognitionService.results(from: [SHMediaItem(properties: properties)]).first)
+        XCTAssertEqual(result.explicitContent, false)
+        XCTAssertNil(result.matchOffset)
+        XCTAssertNil(result.frequencySkew)
+        XCTAssertNil(result.confidence)
+        XCTAssertNoThrow(try JSONEncoder().encode(result))
     }
 
     func testServiceErrorIncludesDiagnosticCodeWithoutEchoingServerDetails() {

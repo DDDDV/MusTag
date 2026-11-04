@@ -332,11 +332,36 @@ final class MusTagUITests: XCTestCase {
 
         audio.tap()
         XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "draftAppleMusicLink").firstMatch.waitForExistence(timeout: 5))
-        let candidate = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "metadataCandidate_")).firstMatch
+        let details = app.buttons["shazamMetadataDetailsButton"]
+        XCTAssertTrue(details.waitForExistence(timeout: 5))
+        details.tap()
+        let detailsDone = app.buttons["shazamMetadataDetailsDoneButton"]
+        XCTAssertTrue(detailsDone.waitForExistence(timeout: 5))
+        for (field, value) in [("subtitle", "Shazam supplementary details"),
+                               ("isrc", "USAAA2600001"), ("appleMusicID", "456")] {
+            let row = app.descendants(matching: .any).matching(identifier: "shazamMetadata_\(field)").firstMatch
+            for _ in 0..<4 where !row.isHittable { app.swipeUp() }
+            XCTAssertTrue(row.isHittable, field)
+            XCTAssertEqual(row.value as? String, value, field)
+        }
+        detailsDone.tap()
+        for (field, value) in [("title", "Shazam matched title"), ("artist", "Shazam matched artist"),
+                               ("album", "Test album"), ("albumArtist", "Album artist"),
+                               ("year", "1998"), ("trackNumber", "7"), ("discNumber", "2"), ("genre", "Pop")] {
+            let input = app.descendants(matching: .any).matching(identifier: "tag_\(field)").firstMatch
+            for _ in 0..<5 where !input.exists { app.swipeUp() }
+            XCTAssertTrue(input.exists, field)
+            XCTAssertEqual(input.value as? String, value, field)
+        }
+        let candidate = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "metadataCandidate_", "Test album")).firstMatch
         for _ in 0..<7 where !candidate.isHittable { app.swipeUp() }
         XCTAssertTrue(candidate.isHittable)
         XCTAssertTrue(candidate.isSelected)
-        XCTAssertTrue(candidate.label.contains("Recognized with Shazam"))
+        XCTAssertTrue(candidate.label.contains("Apple Music"))
+        XCTAssertTrue(candidate.label.contains("Year 1998"))
+        XCTAssertTrue(candidate.label.contains("Disc 2"))
+        XCTAssertTrue(candidate.label.contains("Track 7"))
         XCTAssertFalse(candidate.label.contains("%"), "Shazam must not be presented as an AcoustID similarity score")
         let appleMusicLink = app.descendants(matching: .any)
             .matching(NSPredicate(format: "identifier BEGINSWITH %@", "appleMusicLink_")).firstMatch
@@ -370,8 +395,8 @@ final class MusTagUITests: XCTestCase {
         XCTAssertTrue(batchReview.isEnabled)
         XCTAssertEqual(batchReview.label, "Review 1")
         batchReview.tap()
-        XCTAssertTrue(app.buttons["draftArtworkPreview"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["No original cover"].exists)
+        XCTAssertTrue(app.buttons["confirmSaveButton"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["draftArtworkPreview"].exists, "AcoustID does not supply album artwork")
         XCTAssertTrue(app.staticTexts["Original title"].exists)
         XCTAssertTrue(app.staticTexts["Matched title"].exists)
         capture("09-auto-match-review")
@@ -380,8 +405,8 @@ final class MusTagUITests: XCTestCase {
         XCTAssertTrue(batchReview.isEnabled, "Cancelling review must keep the automatic draft")
 
         audio.tap()
-        let highID = "metadataCandidate_10000000-0000-0000-0000-000000000001:20000000-0000-0000-0000-000000000001"
-        let lowID = "metadataCandidate_10000000-0000-0000-0000-000000000002:20000000-0000-0000-0000-000000000002"
+        let highID = "metadataCandidate_10000000-0000-0000-0000-000000000001"
+        let lowID = "metadataCandidate_10000000-0000-0000-0000-000000000002"
         let high = app.buttons[highID]
         let low = app.buttons[lowID]
         for _ in 0..<6 where !low.isHittable { app.swipeUp() }

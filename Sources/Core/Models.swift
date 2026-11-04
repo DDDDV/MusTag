@@ -32,6 +32,8 @@ struct ShazamAttribution: Codable, Equatable, Sendable {
     var title: String
     var artist: String
     var appleMusicURL: URL?
+    var metadata: ShazamRecognitionResult? = nil
+    var appleMusicMetadata: AppleMusicSongMetadata? = nil
 }
 
 struct AudioDocument: Identifiable, Codable, Sendable {
@@ -76,23 +78,23 @@ enum RecognitionProvider: String, CaseIterable, Identifiable, Sendable {
 }
 
 enum MetadataSource: Sendable {
-    case musicBrainz, acoustID, shazamKit
+    case acoustID, shazamKit
 }
 
 struct MetadataCandidate: Identifiable, Sendable {
     var id: String
-    // MusicBrainz identifiers only. Shazam identifiers must never enter MB/CAA URLs.
-    var recordingID: String?
-    var releaseID: String?
     var tags: AudioTags
     var duration: Double?
     var score: Double?
     var detail: String
     var hasIncompleteReleaseInfo = false
-    var source: MetadataSource = .musicBrainz
+    var source: MetadataSource = .acoustID
     var artworkURL: URL? = nil
     var appleMusicURL: URL? = nil
     var isrc: String? = nil
+    var shazamMetadata: ShazamRecognitionResult? = nil
+    var appleMusicMetadata: AppleMusicSongMetadata? = nil
+    var supplementationNotice: String? = nil
 }
 
 struct BackupRecord: Identifiable, Codable, Sendable {

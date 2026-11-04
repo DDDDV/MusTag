@@ -34,8 +34,6 @@ final class ShazamFlowTests: XCTestCase {
         let candidate = try XCTUnwrap(context.model.candidates[document.id]?.first)
         XCTAssertTrue(candidate.source == .shazamKit)
         XCTAssertNil(candidate.score, "Shazam results must not fabricate an AcoustID similarity score")
-        XCTAssertNil(candidate.recordingID, "A Shazam ID is not a MusicBrainz recording ID")
-        XCTAssertNil(candidate.releaseID)
         XCTAssertEqual(context.model.appliedCandidateIDs[document.id], candidate.id)
         XCTAssertFalse(context.model.showsSettings)
         try await assertOriginalUntouched(context)
@@ -52,7 +50,7 @@ final class ShazamFlowTests: XCTestCase {
         let downloaded = try artwork(color: .blue)
         let expectedURL = artworkURL
         ShazamFlowURLProtocol.handler = { request in
-            XCTAssertEqual(request.url, expectedURL, "Shazam artwork must not route through MusicBrainz or CAA")
+            XCTAssertEqual(request.url, expectedURL, "The matched artwork URL must be used unchanged")
             return .init(status: 200, data: downloaded.data)
         }
 
@@ -64,12 +62,13 @@ final class ShazamFlowTests: XCTestCase {
         XCTAssertEqual(document.draft.artist, match.artist)
         XCTAssertEqual(document.draft.genre, L10n.text("Pop", "流行"))
         XCTAssertEqual(document.draftArtwork, downloaded)
-        XCTAssertNil(document.error)
+        XCTAssertNotNil(document.error, "Missing catalog data should remain visible without losing the Shazam match")
         let candidate = try XCTUnwrap(context.model.candidates[document.id]?.first)
         XCTAssertEqual(candidate.appleMusicURL, appleMusicURL)
         XCTAssertEqual(candidate.isrc, match.isrc)
         XCTAssertNil(candidate.score)
-        let attribution = ShazamAttribution(title: match.title, artist: match.artist, appleMusicURL: appleMusicURL)
+        let attribution = ShazamAttribution(title: match.title, artist: match.artist,
+                                           appleMusicURL: appleMusicURL, metadata: match)
         XCTAssertEqual(document.draftShazamAttribution, attribution)
         XCTAssertNil(document.originalShazamAttribution)
         let persisted = try await context.store.loadLibrary()
@@ -90,7 +89,10 @@ final class ShazamFlowTests: XCTestCase {
                                                artworkURL: artworkURL)
             let context = try await context(matches: [match])
             defer { context.cleanUp() }
-            ShazamFlowURLProtocol.handler = { _ in .init(status: status, data: Data()) }
+            ShazamFlowURLProtocol.handler = { request in
+                XCTAssertEqual(request.url, self.artworkURL)
+                return .init(status: status, data: Data())
+            }
 
             context.model.identify([context.document.id], automaticallyApply: true)
             try await waitUntilIdle(context.model)
@@ -189,7 +191,8 @@ final class ShazamFlowTests: XCTestCase {
         let previousCover = try artwork(color: .green)
         context.model.documents[0].draftArtwork = previousCover
         let started = expectation(description: "Shazam cover started")
-        ShazamFlowURLProtocol.handler = { _ in
+        ShazamFlowURLProtocol.handler = { request in
+            XCTAssertEqual(request.url, self.artworkURL)
             started.fulfill()
             return .init(status: 200, data: Data(), stalls: true)
         }
@@ -226,17 +229,30 @@ final class ShazamFlowTests: XCTestCase {
 
     @MainActor
     func testConfirmedShazamDraftSavesWithBackupAndPreservesAudioThenRestores() async throws {
+        let previousMatch = ShazamRecognitionResult(id: "previous", title: "Original title", artist: "Original artist",
+            appleMusicID: "100", explicitContent: false)
         let previousAttribution = ShazamAttribution(title: "Original title", artist: "Original artist",
-            appleMusicURL: URL(string: "https://music.apple.com/us/song/original/100"))
+            appleMusicURL: URL(string: "https://music.apple.com/us/song/original/100"), metadata: previousMatch)
         let match = ShazamRecognitionResult(id: "110", title: "Saved recognition", artist: "Matched artist",
-                                           artworkURL: artworkURL,
-                                           appleMusicURL: URL(string: "https://music.apple.com/us/song/new/110"))
+            isrc: "USAAA2600001", artworkURL: artworkURL,
+            appleMusicURL: URL(string: "https://music.apple.com/us/song/new/110"),
+            subtitle: "Live performance", appleMusicID: "110",
+            webURL: URL(string: "https://www.shazam.com/track/110/song"),
+            videoURL: URL(string: "https://example.com/video"), explicitContent: true,
+            creationDate: Date(timeIntervalSince1970: 1_700_000_000),
+            timeRanges: [2..<8], frequencySkewRanges: [0.95..<1.05],
+            matchOffset: 12, frequencySkew: 1.01, predictedCurrentMatchOffset: 14)
+        let song = appleSong(id: "110")
         let expectedAttribution = ShazamAttribution(title: match.title, artist: match.artist,
-                                                    appleMusicURL: match.appleMusicURL)
-        let context = try await context(matches: [match], originalAttribution: previousAttribution)
+            appleMusicURL: match.appleMusicURL, metadata: match, appleMusicMetadata: song)
+        let context = try await context(matches: [match], appleMusicProvider: { _ in song },
+                                        originalAttribution: previousAttribution, originalAlbum: "")
         defer { context.cleanUp() }
         let downloaded = try artwork(color: .blue)
-        ShazamFlowURLProtocol.handler = { _ in .init(status: 200, data: downloaded.data) }
+        ShazamFlowURLProtocol.handler = { request in
+            XCTAssertEqual(request.url, song.artworkURL)
+            return .init(status: 200, data: downloaded.data)
+        }
         let originalAudioHash = try NativeAudio.payloadHash(url: context.source)
         context.model.identify([context.document.id], automaticallyApply: true)
         try await waitUntilIdle(context.model)
@@ -252,7 +268,10 @@ final class ShazamFlowTests: XCTestCase {
         XCTAssertEqual(saved.draftShazamAttribution, expectedAttribution)
         let snapshot = try NativeMetadataCodec().read(from: context.source)
         XCTAssertEqual(snapshot.tags.title, match.title)
-        XCTAssertEqual(snapshot.tags.album, context.document.original.album)
+        XCTAssertEqual(snapshot.tags.album, "Catalog album")
+        XCTAssertEqual(snapshot.tags.year, "1998", "The Shazam item's creation date must not become the release year")
+        XCTAssertEqual(snapshot.tags.trackNumber, "7")
+        XCTAssertEqual(snapshot.tags.discNumber, "2")
         XCTAssertEqual(snapshot.artwork, downloaded)
         XCTAssertEqual(try NativeAudio.payloadHash(url: context.source), originalAudioHash)
         let backups = try await context.store.backups()
@@ -321,16 +340,222 @@ final class ShazamFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testAppleMusicCompletesAlbumYearAndPositionInPersistentDraftOnly() async throws {
+        let match = ShazamRecognitionResult(id: "112", title: "Shazam title", artist: "Shazam artist",
+            genres: ["Pop"], isrc: "USAAA2600001", artworkURL: artworkURL,
+            appleMusicURL: URL(string: "https://music.apple.com/us/song/456"), appleMusicID: "456")
+        let song = appleSong()
+        let context = try await context(matches: [match], appleMusicProvider: { id in
+            XCTAssertEqual(id, "456")
+            return song
+        }, originalAlbum: "")
+        defer { context.cleanUp() }
+        let downloaded = try artwork(color: .blue)
+        ShazamFlowURLProtocol.handler = { request in
+            XCTAssertEqual(request.url, song.artworkURL, "The selected catalog edition supplies its own cover")
+            return .init(status: 200, data: downloaded.data)
+        }
+
+        context.model.identify([context.document.id], automaticallyApply: true)
+        try await waitUntilIdle(context.model)
+
+        let document = try XCTUnwrap(context.model.document(context.document.id))
+        XCTAssertEqual(document.draft.title, match.title)
+        XCTAssertEqual(document.draft.artist, match.artist)
+        XCTAssertEqual(document.draft.genre, L10n.text("Pop", "流行"))
+        XCTAssertEqual(document.draft.album, "Catalog album")
+        XCTAssertEqual(document.draft.albumArtist, "Album artist")
+        XCTAssertEqual(document.draft.year, "1998")
+        XCTAssertEqual(document.draft.trackNumber, "7")
+        XCTAssertEqual(document.draft.discNumber, "2")
+        XCTAssertEqual(document.draftArtwork, downloaded)
+        XCTAssertEqual(document.draftShazamAttribution?.metadata, match)
+        XCTAssertEqual(document.draftShazamAttribution?.appleMusicMetadata, song)
+        let persisted = try await context.store.loadLibrary()
+        XCTAssertEqual(persisted.documents.first?.draft, document.draft)
+        XCTAssertEqual(persisted.documents.first?.draftShazamAttribution?.appleMusicMetadata, song)
+        XCTAssertEqual(ShazamFlowURLProtocol.requests.count, 1)
+        try await assertOriginalUntouched(context)
+    }
+
+    @MainActor
+    func testMissingShazamCoverUsesOnlyTheSelectedAppleMusicArtwork() async throws {
+        let match = ShazamRecognitionResult(id: "113", title: "Shazam title", artist: "Shazam artist",
+                                           appleMusicID: "456")
+        let song = appleSong()
+        let context = try await context(matches: [match], appleMusicProvider: { _ in song }, originalAlbum: "")
+        defer { context.cleanUp() }
+        let downloaded = try artwork(color: .blue)
+        ShazamFlowURLProtocol.handler = { request in
+            XCTAssertEqual(request.url, song.artworkURL)
+            return .init(status: 200, data: downloaded.data)
+        }
+
+        context.model.identify([context.document.id], automaticallyApply: true)
+        try await waitUntilIdle(context.model)
+
+        let document = try XCTUnwrap(context.model.document(context.document.id))
+        XCTAssertEqual(document.draft.album, song.albumTitle)
+        XCTAssertEqual(document.draftArtwork, downloaded)
+        XCTAssertEqual(ShazamFlowURLProtocol.requests.count, 1)
+        try await assertOriginalUntouched(context)
+    }
+
+    @MainActor
+    func testAppleMusicFailureRetainsRecognizedSongAndExistingReleaseFields() async throws {
+        let match = ShazamRecognitionResult(id: "114", title: "Shazam title", artist: "Shazam artist",
+                                           genres: ["Pop"], appleMusicID: "456")
+        let context = try await context(matches: [match], appleMusicProvider: { _ in
+            throw URLError(.notConnectedToInternet)
+        })
+        defer { context.cleanUp() }
+
+        context.model.identify([context.document.id], automaticallyApply: true)
+        try await waitUntilIdle(context.model)
+
+        let document = try XCTUnwrap(context.model.document(context.document.id))
+        XCTAssertEqual(document.draft.title, match.title)
+        XCTAssertEqual(document.draft.artist, match.artist)
+        XCTAssertEqual(document.draft.album, context.document.original.album)
+        XCTAssertEqual(document.draft.year, context.document.original.year)
+        XCTAssertEqual(document.draft.trackNumber, context.document.original.trackNumber)
+        XCTAssertEqual(document.draft.discNumber, context.document.original.discNumber)
+        XCTAssertEqual(document.draftArtwork, context.document.originalArtwork)
+        XCTAssertNotNil(document.error)
+        XCTAssertEqual(document.draftShazamAttribution?.metadata, match)
+        XCTAssertNil(document.draftShazamAttribution?.appleMusicMetadata)
+        XCTAssertTrue(ShazamFlowURLProtocol.requests.isEmpty)
+        try await assertOriginalUntouched(context)
+    }
+
+    @MainActor
+    func testDifferentAlbumKeepsOriginalEditionUntilCatalogCandidateIsSelected() async throws {
+        let match = ShazamRecognitionResult(id: "115", title: "Shazam title", artist: "Shazam artist",
+                                           genres: ["Pop"], artworkURL: artworkURL, appleMusicID: "456")
+        let song = appleSong()
+        let context = try await context(matches: [match], appleMusicProvider: { _ in song })
+        defer { context.cleanUp() }
+        let shazamArtwork = try artwork(color: .blue)
+        let catalogArtwork = try artwork(color: .green)
+        ShazamFlowURLProtocol.handler = { request in
+            if request.url == self.artworkURL { return .init(status: 200, data: shazamArtwork.data) }
+            XCTAssertEqual(request.url, song.artworkURL)
+            return .init(status: 200, data: catalogArtwork.data)
+        }
+
+        context.model.identify([context.document.id], automaticallyApply: true)
+        try await waitUntilIdle(context.model)
+
+        let initial = try XCTUnwrap(context.model.document(context.document.id))
+        XCTAssertEqual(initial.draft.title, match.title)
+        XCTAssertEqual(initial.draft.album, context.document.original.album)
+        XCTAssertEqual(initial.draft.year, context.document.original.year)
+        XCTAssertEqual(initial.draft.trackNumber, context.document.original.trackNumber)
+        XCTAssertEqual(initial.draft.discNumber, context.document.original.discNumber)
+        XCTAssertNotNil(initial.error)
+        XCTAssertEqual(initial.draftArtwork, shazamArtwork)
+        XCTAssertEqual(ShazamFlowURLProtocol.requests.map(\.url), [artworkURL])
+        let chosen = try XCTUnwrap(context.model.candidates[initial.id]?.first { $0.appleMusicMetadata != nil })
+        context.model.useCandidate(chosen, for: initial.id)
+        try await waitUntilIdle(context.model)
+
+        let selected = try XCTUnwrap(context.model.document(initial.id))
+        XCTAssertEqual(selected.draft.title, match.title)
+        XCTAssertEqual(selected.draft.artist, match.artist)
+        XCTAssertEqual(selected.draft.genre, L10n.text("Pop", "流行"))
+        XCTAssertEqual(selected.draft.album, "Catalog album")
+        XCTAssertEqual(selected.draft.year, "1998")
+        XCTAssertEqual(selected.draft.trackNumber, "7")
+        XCTAssertEqual(selected.draft.discNumber, "2")
+        XCTAssertEqual(selected.draftArtwork, catalogArtwork)
+        XCTAssertEqual(selected.draftShazamAttribution?.appleMusicMetadata, song)
+        XCTAssertEqual(context.model.appliedCandidateIDs[selected.id], chosen.id)
+        XCTAssertEqual(ShazamFlowURLProtocol.requests.map(\.url), [artworkURL, song.artworkURL])
+        try await assertOriginalUntouched(context)
+    }
+
+    @MainActor
+    func testUnavailableCatalogFieldsDoNotEraseExistingTags() async throws {
+        let match = ShazamRecognitionResult(id: "116", title: "Shazam title", artist: "Shazam artist", appleMusicID: "456")
+        let song = AppleMusicSongMetadata(id: "456", title: "Catalog title", artist: "Catalog artist",
+                                          albumTitle: "Original album")
+        let context = try await context(matches: [match], appleMusicProvider: { _ in song })
+        defer { context.cleanUp() }
+        context.model.identify([context.document.id], automaticallyApply: true)
+        try await waitUntilIdle(context.model)
+
+        let document = try XCTUnwrap(context.model.document(context.document.id))
+        XCTAssertEqual(document.draft.title, match.title)
+        XCTAssertEqual(document.draft.albumArtist, context.document.original.albumArtist)
+        XCTAssertEqual(document.draft.year, context.document.original.year)
+        XCTAssertEqual(document.draft.trackNumber, context.document.original.trackNumber)
+        XCTAssertEqual(document.draft.discNumber, context.document.original.discNumber)
+        try await assertOriginalUntouched(context)
+    }
+
+    @MainActor
+    func testCancellationDuringAppleMusicSupplementationKeepsPriorDraft() async throws {
+        let match = ShazamRecognitionResult(id: "117", title: "Should not apply", artist: "Shazam artist", appleMusicID: "456")
+        let started = expectation(description: "Apple Music lookup started")
+        let context = try await context(matches: [match], appleMusicProvider: { _ in
+            started.fulfill()
+            try await Task.sleep(for: .seconds(30))
+            return nil
+        })
+        defer { context.cleanUp() }
+        var draft = context.document.draft
+        draft.title = "My pending edit"
+        context.model.updateDraft(draft, for: context.document.id)
+
+        context.model.identify([context.document.id], automaticallyApply: true)
+        await fulfillment(of: [started], timeout: 3)
+        context.model.cancelOperation()
+        try await waitUntilIdle(context.model)
+
+        let document = try XCTUnwrap(context.model.document(context.document.id))
+        XCTAssertEqual(document.draft, draft)
+        XCTAssertEqual(document.draftArtwork, context.document.draftArtwork)
+        XCTAssertNil(document.draftShazamAttribution)
+        XCTAssertNil(context.model.appliedCandidateIDs[document.id])
+        let persisted = try await context.store.loadLibrary()
+        XCTAssertEqual(persisted.documents.first?.draft, draft)
+        XCTAssertTrue(ShazamFlowURLProtocol.requests.isEmpty)
+        try await assertOriginalUntouched(context)
+    }
+
+    func testExistingAttributionWithoutExtendedMetadataStillDecodes() throws {
+        let json = Data(#"{"title":"Song","artist":"Artist","appleMusicURL":"https://music.apple.com/us/song/456"}"#.utf8)
+        let attribution = try JSONDecoder().decode(ShazamAttribution.self, from: json)
+        XCTAssertEqual(attribution.title, "Song")
+        XCTAssertNil(attribution.metadata)
+        XCTAssertNil(attribution.appleMusicMetadata)
+    }
+
+    private func appleSong(id: String = "456") -> AppleMusicSongMetadata {
+        var song = AppleMusicSongMetadata(id: id, title: "Catalog title", artist: "Catalog artist")
+        song.albumTitle = "Catalog album"
+        song.albumArtist = "Album artist"
+        song.releaseDate = ISO8601DateFormatter().date(from: "1998-04-05T00:00:00Z")!
+        song.trackNumber = 7
+        song.discNumber = 2
+        song.isrc = "USAAA2600001"
+        song.artworkURL = URL(string: "https://is1-ssl.mzstatic.com/catalog-cover.png")
+        return song
+    }
+
+    @MainActor
     private func context(matches: [ShazamRecognitionResult], provider: RecognitionProvider? = nil,
                          shazamProvider: MusicRecognitionService.ShazamProvider? = nil,
-                         originalAttribution: ShazamAttribution? = nil) async throws -> Context {
+                         appleMusicProvider: @escaping @Sendable (String) async throws -> AppleMusicSongMetadata? = { _ in nil },
+                         originalAttribution: ShazamAttribution? = nil,
+                         originalAlbum: String = "Original album") async throws -> Context {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("ShazamFlow-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let source = root.appendingPathComponent("song.m4a")
         let fixture = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "sample", withExtension: "m4a", subdirectory: "Fixtures"))
         try FileManager.default.copyItem(at: fixture, to: source)
         let codec = NativeMetadataCodec()
-        try codec.write(AudioTags(title: "Original title", artist: "Original artist", album: "Original album",
+        try codec.write(AudioTags(title: "Original title", artist: "Original artist", album: originalAlbum,
                                   albumArtist: "Original album artist", year: "2001", trackNumber: "3",
                                   discNumber: "2", genre: "Local genre"), to: source)
         try codec.writeArtwork(artwork(color: .red), to: source)
@@ -344,11 +569,10 @@ final class ShazamFlowTests: XCTestCase {
         configuration.protocolClasses = [ShazamFlowURLProtocol.self]
         let session = URLSession(configuration: configuration)
         let recognize: MusicRecognitionService.ShazamProvider = shazamProvider ?? { _ in matches }
-        let recognition = MusicRecognitionService(session: session, minimumMusicBrainzInterval: 0,
-            minimumAcoustIDInterval: 0, fingerprintProvider: { _ in
+        let recognition = MusicRecognitionService(session: session, minimumAcoustIDInterval: 0, fingerprintProvider: { _ in
                 XCTFail("Selecting Shazam must not run AcoustID fingerprinting")
                 throw URLError(.unsupportedURL)
-            }, shazamProvider: recognize)
+            }, shazamProvider: recognize, appleMusicProvider: appleMusicProvider)
         ShazamFlowURLProtocol.handler = { request in
             XCTFail("Unexpected network request: \(request.url?.host ?? "nil")")
             throw URLError(.unsupportedURL)
@@ -420,14 +644,26 @@ private final class ShazamFlowURLProtocol: URLProtocol {
     }
     private static let lock = NSLock()
     private static var responseHandler: ((URLRequest) throws -> Response)?
+    private static var recordedRequests: [URLRequest] = []
+    static var requests: [URLRequest] {
+        lock.lock(); defer { lock.unlock() }
+        return recordedRequests
+    }
     static var handler: ((URLRequest) throws -> Response)? {
         get { lock.lock(); defer { lock.unlock() }; return responseHandler }
-        set { lock.lock(); defer { lock.unlock() }; responseHandler = newValue }
+        set {
+            lock.lock(); defer { lock.unlock() }
+            responseHandler = newValue
+            recordedRequests = []
+        }
     }
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
         do {
+            Self.lock.lock()
+            Self.recordedRequests.append(request)
+            Self.lock.unlock()
             let result = try XCTUnwrap(Self.handler)(request)
             if result.stalls { return }
             let response = try XCTUnwrap(HTTPURLResponse(url: request.url!, statusCode: result.status,

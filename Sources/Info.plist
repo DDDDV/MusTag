@@ -26,6 +26,8 @@
 	<true/>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Access audio files you select on your NAS.</string>
+	<key>NSAppleMusicUsageDescription</key>
+	<string>Use Apple Music to look up album, release year, track and disc details for songs recognized by Shazam. 使用 Apple Music 补全 Shazam 识别歌曲的专辑、年份、曲序和碟号。</string>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>UIFileSharingEnabled</key>

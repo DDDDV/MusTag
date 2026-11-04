@@ -2,7 +2,7 @@ import Foundation
 import ImageIO
 import UniformTypeIdentifiers
 
-/// Downloads a selected release's front cover or the artwork returned by ShazamKit.
+/// Downloads the artwork returned by ShazamKit or its associated Apple Music item.
 actor CoverArtService {
     private let session: URLSession
     private static let maximumBytes = 8 * 1024 * 1024
@@ -20,29 +20,13 @@ actor CoverArtService {
         }
     }
 
-    /// A missing cover is an ordinary result; it must never select a different release.
-    func frontCover(releaseID: String) async throws -> AudioArtwork? {
-        try Task.checkCancellation()
-        guard let id = UUID(uuidString: releaseID) else {
-            throw MusTagError.message(L10n.text("The selected release has an invalid identifier.", "所选发行版本的标识无效。"))
-        }
-        // CAA can have an original even when its 1200px thumbnail has not been generated.
-        // Both endpoints belong to this exact release; never fall back to a release group.
-        let base = "https://coverartarchive.org/release/\(id.uuidString.lowercased())"
-        for endpoint in ["front-1200", "front"] {
-            try Task.checkCancellation()
-            if let artwork = try await download(URL(string: "\(base)/\(endpoint)")!) { return artwork }
-        }
-        return nil
-    }
-
-    /// Use the URL returned by ShazamKit unchanged; never substitute another recording's artwork.
+    /// Use the returned Apple artwork URL unchanged; never substitute another recording's artwork.
     func shazamCover(url: URL) async throws -> AudioArtwork? {
         try Task.checkCancellation()
         return try await download(url, provider: .shazam)
     }
 
-    private func download(_ url: URL, provider: CoverArtProvider = .coverArtArchive) async throws -> AudioArtwork? {
+    private func download(_ url: URL, provider: CoverArtProvider = .shazam) async throws -> AudioArtwork? {
         guard CoverArtRedirectDelegate.allows(url, provider: provider) else {
             throw Self.invalidResponse(provider: provider)
         }
@@ -96,7 +80,7 @@ actor CoverArtService {
     /// Keep only an allowlisted hostname and a numeric code; URL paths and error descriptions
     /// can contain request details and must never be echoed into the user-visible message.
     static func downloadError(_ error: URLError, fallbackHost: String,
-                              provider: CoverArtProvider = .coverArtArchive) -> MusTagError {
+                              provider: CoverArtProvider = .shazam) -> MusTagError {
         let failingURL = error.userInfo[NSURLErrorFailingURLErrorKey] as? URL
         let host = CoverArtRedirectDelegate.safeHost(failingURL, provider: provider)
             ?? CoverArtRedirectDelegate.safeHost(URL(string: "https://\(fallbackHost)"), provider: provider)
@@ -176,19 +160,19 @@ actor CoverArtService {
 }
 
 enum CoverArtProvider: Sendable {
-    case coverArtArchive, shazam
+    case shazam
 
-    var name: String { self == .coverArtArchive ? "Cover Art Archive" : "Shazam" }
-    var fallbackHost: String { self == .coverArtArchive ? "coverartarchive.org" : "mzstatic.com" }
+    var name: String { "Shazam / Apple Music" }
+    var fallbackHost: String { "mzstatic.com" }
 }
 
-/// Keep CAA/Internet Archive and Apple artwork redirects in separate trust domains.
+/// Keep both initial requests and redirects within Apple's artwork domains.
 final class CoverArtRedirectDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     private let lock = NSLock()
     private let provider: CoverArtProvider
     private var recordedHost: String
 
-    init(initialURL: URL, provider: CoverArtProvider = .coverArtArchive) {
+    init(initialURL: URL, provider: CoverArtProvider = .shazam) {
         self.provider = provider
         recordedHost = Self.safeHost(initialURL, provider: provider) ?? provider.fallbackHost
         super.init()
@@ -200,20 +184,15 @@ final class CoverArtRedirectDelegate: NSObject, URLSessionTaskDelegate, @uncheck
         return recordedHost
     }
 
-    static func safeHost(_ url: URL?, provider: CoverArtProvider = .coverArtArchive) -> String? {
+    static func safeHost(_ url: URL?, provider: CoverArtProvider = .shazam) -> String? {
         guard allows(url, provider: provider) else { return nil }
         return url?.host?.lowercased()
     }
 
-    static func allows(_ url: URL?, provider: CoverArtProvider = .coverArtArchive) -> Bool {
+    static func allows(_ url: URL?, provider: CoverArtProvider = .shazam) -> Bool {
         guard let url, url.scheme?.lowercased() == "https", url.user == nil, url.password == nil,
               url.port == nil || url.port == 443, let host = url.host?.lowercased() else { return false }
-        switch provider {
-        case .coverArtArchive:
-            return host == "coverartarchive.org" || host == "archive.org" || host.hasSuffix(".archive.org")
-        case .shazam:
-            return host == "mzstatic.com" || host.hasSuffix(".mzstatic.com")
-        }
+        return host == "mzstatic.com" || host.hasSuffix(".mzstatic.com")
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask,
