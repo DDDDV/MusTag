@@ -275,6 +275,60 @@ final class MusTagUITests: XCTestCase {
         XCTAssertTrue(app.secureTextFields["apiKeyField"].exists)
     }
 
+    func testAutomaticMatchingRanksCandidatesAndKeepsDraftUntilReviewSave() {
+        app.terminate()
+        app.launchArguments += ["--ui-testing-with-audio", "--ui-testing-auto-match"]
+        app.launch()
+        let audio = app.buttons["audioRow_UI Test.m4a"]
+        XCTAssertTrue(audio.waitForExistence(timeout: 10))
+        let batchReview = app.buttons["reviewButton"]
+        XCTAssertFalse(batchReview.isEnabled)
+        app.buttons["identifyButton"].tap()
+
+        let notice = app.alerts["Notice"]
+        XCTAssertTrue(notice.waitForExistence(timeout: 15))
+        XCTAssertTrue(notice.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Added to drafts: 1")).firstMatch.exists)
+        notice.buttons["OK"].tap()
+        XCTAssertTrue(batchReview.isEnabled)
+        XCTAssertEqual(batchReview.label, "Review 1")
+        batchReview.tap()
+        XCTAssertTrue(app.buttons["draftArtworkPreview"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["No original cover"].exists)
+        XCTAssertTrue(app.staticTexts["Original title"].exists)
+        XCTAssertTrue(app.staticTexts["Matched title"].exists)
+        capture("09-auto-match-review")
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(batchReview.waitForExistence(timeout: 3))
+        XCTAssertTrue(batchReview.isEnabled, "Cancelling review must keep the automatic draft")
+
+        audio.tap()
+        let highID = "metadataCandidate_10000000-0000-0000-0000-000000000001:20000000-0000-0000-0000-000000000001"
+        let lowID = "metadataCandidate_10000000-0000-0000-0000-000000000002:20000000-0000-0000-0000-000000000002"
+        let high = app.buttons[highID]
+        let low = app.buttons[lowID]
+        for _ in 0..<6 where !low.isHittable { app.swipeUp() }
+        XCTAssertTrue(high.exists)
+        XCTAssertTrue(low.exists)
+        XCTAssertTrue(high.label.contains("97.00%"))
+        XCTAssertTrue(low.label.contains("89.00%"))
+        XCTAssertTrue(high.isSelected, "The highest similarity must be selected by default")
+        XCTAssertFalse(low.isSelected)
+        let rankedIDs = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "metadataCandidate_")).allElementsBoundByIndex.map(\.identifier)
+        XCTAssertEqual(rankedIDs, [highID, lowID])
+        capture("10-auto-match-candidates")
+
+        let review = app.buttons["trackReviewButton"]
+        XCTAssertTrue(review.isEnabled)
+        review.tap()
+        XCTAssertTrue(app.buttons["confirmSaveButton"].waitForExistence(timeout: 5))
+        app.buttons["confirmSaveButton"].tap()
+        expectation(for: NSPredicate(format: "exists == true AND enabled == false"), evaluatedWith: review)
+        waitForExpectations(timeout: 15)
+        app.navigationBars["Edit tags"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.staticTexts["Matched title"].waitForExistence(timeout: 5))
+        XCTAssertFalse(batchReview.isEnabled)
+    }
+
     func testSelectedReleaseCoverRequiresReviewThenSavesAndRestores() {
         app.terminate()
         app.launchArguments += ["--ui-testing-with-audio", "--ui-testing-with-cover"]

@@ -84,15 +84,22 @@ struct TrackEditorView: View {
                         Section {
                             ForEach(candidates) { candidate in
                                 Button { model.useCandidate(candidate, for: documentID) } label: {
-                                    MetadataCandidateRow(candidate: candidate)
+                                    MetadataCandidateRow(candidate: candidate,
+                                                         isApplied: model.appliedCandidateIDs[documentID] == candidate.id)
                                 }
                                 .accessibilityIdentifier("metadataCandidate_\(candidate.id)")
+                                .accessibilityAddTraits(model.appliedCandidateIDs[documentID] == candidate.id ? [.isSelected] : [])
                                 .disabled(model.isWorking)
                             }
                         } header: {
-                            Text(L10n.text("Choose a match", "选择匹配版本"))
+                            Text(L10n.text("Matching candidates", "匹配候选"))
                         } footer: {
-                            Text(L10n.text("Choose a release to fill the draft and download its cover from Cover Art Archive. Missing fields and unavailable covers keep your original values.", "选择发行版本后填入草稿，并从 Cover Art Archive 下载对应封面。空缺字段和未获取到的封面会保留原有内容。"))
+                            VStack(alignment: .leading, spacing: 6) {
+                                if candidates.contains(where: { $0.score != nil }) {
+                                    Text(L10n.text("Fingerprint matches are sorted by similarity. Matches below 90% or with unresolved edition choices need manual selection. You can choose another candidate at any time.", "指纹候选按相似度从高到低排列。低于 90% 或无法确定发行版本时需手动选择，也可以手动改选其他候选。"))
+                                }
+                                Text(L10n.text("The selected release fills the draft and downloads its cover. Missing fields keep their current values; unavailable covers keep the original cover. Review before saving.", "选中版本后填入草稿并下载封面。空缺字段保留现有内容，未获取到封面时保留原封面，预览确认后保存。"))
+                            }
                         }
                     }
                 }
@@ -116,8 +123,8 @@ struct TrackEditorView: View {
                     else {
                         VStack(spacing: 10) {
                             HStack(spacing: 12) {
-                                Button { model.identify([documentID]) } label: {
-                                    Label(L10n.text("Identify", "指纹识别"), systemImage: "waveform")
+                                Button { model.identify([documentID], automaticallyApply: true) } label: {
+                                    Label(L10n.text("Auto-match", "自动匹配"), systemImage: "waveform")
                                         .frame(maxWidth: .infinity)
                                 }
                                 .accessibilityIdentifier("trackIdentifyButton")
@@ -134,6 +141,9 @@ struct TrackEditorView: View {
                             .buttonStyle(.borderedProminent)
                             .disabled(!document.hasChanges)
                             .accessibilityIdentifier("trackReviewButton")
+                            Text(L10n.text("Fixed 90% threshold · results go into the draft", "固定 90% 门槛 · 匹配结果先填入草稿"))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
                         .controlSize(.large)
                         .padding(.horizontal)
@@ -183,6 +193,14 @@ struct TrackEditorView: View {
 
 private struct MetadataCandidateRow: View {
     let candidate: MetadataCandidate
+    let isApplied: Bool
+
+    private var similarity: String? {
+        guard let score = candidate.score, score.isFinite, (0...1).contains(score) else { return nil }
+        // Truncate instead of rounding a sub-threshold score up to 90%.
+        return String(format: "%.2f%%", (score * 10_000).rounded(.down) / 100)
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 5) {
@@ -194,9 +212,23 @@ private struct MetadataCandidateRow: View {
                 if !candidate.detail.isEmpty {
                     Text(candidate.detail).font(.caption).foregroundStyle(.secondary)
                 }
+                if let similarity {
+                    Text(L10n.text("Fingerprint similarity \(similarity)", "指纹相似度 \(similarity)"))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                if isApplied {
+                    Text(L10n.text("Applied to draft", "已填入草稿"))
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.indigo)
+                }
             }
             Spacer(minLength: 0)
-            Image(systemName: "arrow.down.to.line").font(.subheadline).padding(.top, 3)
+            Image(systemName: isApplied ? "checkmark.circle.fill" : "arrow.down.to.line")
+                .font(.subheadline)
+                .foregroundStyle(isApplied ? Color.indigo : Color.secondary)
+                .padding(.top, 3)
+                .accessibilityHidden(true)
         }
         .padding(.vertical, 3)
     }

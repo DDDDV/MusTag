@@ -291,9 +291,17 @@ private struct LibraryContentsView: View {
                     .accessibilityIdentifier("batchRemoveButton")
                 }
             }
+            if !selecting {
+                Text(folder == nil
+                     ? L10n.text("Entire library · \(targetIDs.count) files", "全部资料库 · \(targetIDs.count) 个文件")
+                     : L10n.text("Current folder · \(targetIDs.count) files", "当前文件夹 · \(targetIDs.count) 个文件"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
             HStack(spacing: 12) {
-                Button { model.identify(targetIDs) } label: {
-                    Label(L10n.text("Identify", "识别"), systemImage: "waveform")
+                Button { model.identify(targetIDs, automaticallyApply: true) } label: {
+                    Label(L10n.text("Auto-match", "自动匹配"), systemImage: "waveform")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.bordered)
@@ -308,6 +316,10 @@ private struct LibraryContentsView: View {
                 .accessibilityIdentifier("reviewButton")
             }
             .controlSize(.large)
+            Text(L10n.text("Fixed 90% threshold · review drafts before saving", "固定 90% 门槛 · 草稿预览后保存"))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal)
         .padding(.top, 10)

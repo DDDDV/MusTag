@@ -67,6 +67,7 @@ struct MetadataCandidate: Identifiable, Sendable {
     var duration: Double?
     var score: Double?
     var detail: String
+    var hasIncompleteReleaseInfo = false
 }
 
 struct BackupRecord: Identifiable, Codable, Sendable {

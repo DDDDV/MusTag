@@ -3,7 +3,10 @@ import UIKit
 
 /// Fixed responses are enabled only by the isolated UI-test launch arguments.
 enum CoverArtUITestSupport {
+    static let recordingID = "10000000-0000-0000-0000-000000000001"
+    static let lowerRecordingID = "10000000-0000-0000-0000-000000000002"
     static let releaseID = "20000000-0000-0000-0000-000000000001"
+    static let lowerReleaseID = "20000000-0000-0000-0000-000000000002"
 
     static func session() -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
@@ -12,7 +15,7 @@ enum CoverArtUITestSupport {
     }
 
     static func candidate(tags: AudioTags) -> MetadataCandidate {
-        MetadataCandidate(id: "ui-cover-release", recordingID: "10000000-0000-0000-0000-000000000001",
+        MetadataCandidate(id: "ui-cover-release", recordingID: recordingID,
                           releaseID: releaseID, tags: tags, detail: "Cover preview test edition")
     }
 }
@@ -24,7 +27,29 @@ private final class CoverArtUITestProtocol: URLProtocol {
     override func startLoading() {
         guard let url = request.url else { return }
         let data: Data
-        if url.host == "musicbrainz.org", url.path == "/ws/2/release/\(CoverArtUITestSupport.releaseID)" {
+        if url.host == "api.acoustid.org", url.path == "/v2/lookup" {
+            // Deliberately return the lower score first to exercise the user-visible ranking.
+            data = Data("""
+            {"status":"ok","results":[
+              {"score":0.89,"recordings":[{"id":"\(CoverArtUITestSupport.lowerRecordingID)","title":"Similar title"}]},
+              {"score":0.97,"recordings":[{"id":"\(CoverArtUITestSupport.recordingID)","title":"Matched title"}]}
+            ]}
+            """.utf8)
+        } else if url.host == "musicbrainz.org", url.path == "/ws/2/recording/\(CoverArtUITestSupport.recordingID)" {
+            data = Data("""
+            {"id":"\(CoverArtUITestSupport.recordingID)","title":"Matched title","length":120000,
+             "artist-credit":[{"name":"Matched artist"}],
+             "releases":[{"id":"\(CoverArtUITestSupport.releaseID)","title":"Test album"}]}
+            """.utf8)
+        } else if url.host == "musicbrainz.org", url.path == "/ws/2/recording/\(CoverArtUITestSupport.lowerRecordingID)" {
+            data = Data("""
+            {"id":"\(CoverArtUITestSupport.lowerRecordingID)","title":"Similar title","length":120000,
+             "artist-credit":[{"name":"Other artist"}],
+             "releases":[{"id":"\(CoverArtUITestSupport.lowerReleaseID)","title":"Different album"}]}
+            """.utf8)
+        } else if url.host == "musicbrainz.org", url.path == "/ws/2/release/\(CoverArtUITestSupport.lowerReleaseID)" {
+            data = Data("{\"id\":\"\(CoverArtUITestSupport.lowerReleaseID)\",\"title\":\"Different album\",\"media\":[]}".utf8)
+        } else if url.host == "musicbrainz.org", url.path == "/ws/2/release/\(CoverArtUITestSupport.releaseID)" {
             data = Data("{\"id\":\"\(CoverArtUITestSupport.releaseID)\",\"title\":\"Test album\",\"media\":[]}".utf8)
         } else if url.host == "coverartarchive.org", url.path == "/release/\(CoverArtUITestSupport.releaseID)/front-1200" {
             let format = UIGraphicsImageRendererFormat()

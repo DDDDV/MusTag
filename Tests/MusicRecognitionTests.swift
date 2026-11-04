@@ -79,6 +79,208 @@ final class MusicRecognitionTests: XCTestCase {
         XCTAssertEqual(matches[0].score, 0.9)
     }
 
+    func testAutomaticMatchAcceptsExactNinetyPercentWithoutRoundingUpLowerScores() {
+        let boundary = candidate("boundary", score: 0.9)
+        guard case .selected(let selected) = MusicRecognitionService.automaticMatch(from: [boundary], originalAlbum: "") else {
+            return XCTFail("Exactly 90% must be eligible")
+        }
+        XCTAssertEqual(selected.id, boundary.id)
+
+        let below = candidate("below", score: 0.899999)
+        guard case .belowThreshold = MusicRecognitionService.automaticMatch(from: [below], originalAlbum: "") else {
+            return XCTFail("A value below 90% must not become eligible through display rounding")
+        }
+    }
+
+    func testAutomaticMatchChoosesHighestScoreRegardlessOfInputOrderOrOriginalAlbum() {
+        let candidates = [candidate("existing-album", score: 0.94, album: "Existing Album"),
+                          candidate("highest", score: 0.99, album: "Different Album"),
+                          candidate("low", score: 0.5)]
+        guard case .selected(let selected) = MusicRecognitionService.automaticMatch(from: candidates, originalAlbum: "Existing Album") else {
+            return XCTFail("A unique highest score must win")
+        }
+        XCTAssertEqual(selected.id, "highest")
+    }
+
+    func testAutomaticMatchUsesNormalizedOriginalAlbumOnlyWithinHighestScoreTie() {
+        let candidates = [candidate("other", score: 0.95, album: "Other Album"),
+                          candidate("matching", score: 0.95, album: "  Original   Album  "),
+                          candidate("lower", score: 0.92, album: "Original Album")]
+        guard case .selected(let selected) = MusicRecognitionService.automaticMatch(from: candidates, originalAlbum: "\nORIGINAL\t Album\n") else {
+            return XCTFail("Whitespace and case differences must not prevent an exact album match")
+        }
+        XCTAssertEqual(selected.id, "matching")
+    }
+
+    func testAutomaticMatchDoesNotBreakTiesWithMissingFuzzyOrNonuniqueAlbum() {
+        let candidates = [candidate("deluxe", score: 0.97, album: "Album (Deluxe)"),
+                          candidate("other", score: 0.97, album: "Other Album")]
+        for album in ["", " \n\t", "Album", "Missing Album"] {
+            guard case .ambiguous = MusicRecognitionService.automaticMatch(from: candidates, originalAlbum: album) else {
+                return XCTFail("Unresolved highest-score editions must remain ambiguous: \(album)")
+            }
+        }
+        let matchingEditions = [candidate("edition-a", score: 0.97, album: "Album"),
+                                candidate("edition-b", score: 0.97, album: " ALBUM ")]
+        guard case .ambiguous = MusicRecognitionService.automaticMatch(from: matchingEditions, originalAlbum: "Album") else {
+            return XCTFail("The original album cannot choose between two matching editions")
+        }
+    }
+
+    func testAutomaticMatchNeverChoosesLowerScoringAlbumToResolveTopTie() {
+        let candidates = [candidate("top-a", score: 0.97, album: "First"),
+                          candidate("top-b", score: 0.97, album: "Second"),
+                          candidate("existing", score: 0.96, album: "Existing")]
+        guard case .ambiguous = MusicRecognitionService.automaticMatch(from: candidates, originalAlbum: "Existing") else {
+            return XCTFail("Album preference must never lower the fingerprint score")
+        }
+    }
+
+    func testAutomaticMatchRequiresValidFingerprintScore() {
+        let invalidScores: [Double?] = [nil, .nan, .infinity, -.infinity, -0.01, 1.01]
+        let invalid = invalidScores.enumerated().map { candidate("invalid-\($0.offset)", score: $0.element) }
+        for candidates in [[], invalid] {
+            guard case .noMatch = MusicRecognitionService.automaticMatch(from: candidates, originalAlbum: "") else {
+                return XCTFail("Missing or invalid fingerprint scores cannot drive automatic matching")
+            }
+        }
+        guard case .belowThreshold = MusicRecognitionService.automaticMatch(from: invalid + [candidate("zero", score: 0)], originalAlbum: "") else {
+            return XCTFail("A valid zero score is a below-threshold match")
+        }
+    }
+
+    func testCandidateRankingDeduplicatesByBestScoreAndStabilizesTies() {
+        let candidates = [candidate("b", score: 0.5), candidate("z-nil", score: nil),
+                          candidate("c", score: 0.9), candidate("b", score: 0.98),
+                          candidate("a", score: 0.98), candidate("y-invalid", score: 1.2),
+                          candidate("x-nan", score: .nan), candidate("d-zero", score: 0)]
+        let ranked = MusicRecognitionService.rankedCandidates(candidates)
+        XCTAssertEqual(ranked.map(\.id), ["a", "b", "c", "d-zero", "x-nan", "y-invalid", "z-nil"])
+        XCTAssertEqual(ranked[1].score, 0.98)
+        XCTAssertEqual(MusicRecognitionService.rankedCandidates(Array(candidates.reversed())).map(\.id), ranked.map(\.id))
+
+        let repeated = candidate("same", score: 0.95)
+        guard case .selected(let selected) = MusicRecognitionService.automaticMatch(from: [repeated, repeated], originalAlbum: "") else {
+            return XCTFail("Repeated copies of one candidate are not an ambiguous tie")
+        }
+        XCTAssertEqual(selected.id, repeated.id)
+    }
+
+    func testAllReturnedReleaseEditionsParticipateInAutomaticSelection() {
+        let releases = (1...13).map { index in
+            MBRelease(id: "release-\(index)", title: index == 13 ? "Existing Album" : "Edition \(index)")
+        }
+        let recording = MBRecording(id: recordingID, title: "Song", releases: releases)
+        let candidates = MusicRecognitionService.candidates(from: recording, fingerprintScore: 0.96)
+        XCTAssertEqual(candidates.count, 13)
+        guard case .selected(let selected) = MusicRecognitionService.automaticMatch(from: candidates, originalAlbum: "Existing Album") else {
+            return XCTFail("An album beyond the former twelve-edition limit must remain selectable")
+        }
+        XCTAssertEqual(selected.releaseID, "release-13")
+
+        var additionalEdition = releases[12]
+        additionalEdition.id = "release-14"
+        let ambiguousRecording = MBRecording(id: recordingID, title: "Song", releases: releases + [additionalEdition])
+        let ambiguous = MusicRecognitionService.candidates(from: ambiguousRecording, fingerprintScore: 0.96)
+        guard case .ambiguous = MusicRecognitionService.automaticMatch(from: ambiguous, originalAlbum: "Existing Album") else {
+            return XCTFail("A later duplicate album edition must prevent a false unique match")
+        }
+    }
+
+    func testRecordingMatchesUseIDToOrderEqualScores() {
+        let firstID = "10000000-0000-0000-0000-000000000001"
+        let secondID = "10000000-0000-0000-0000-000000000002"
+        let response = AcoustIDResponse(status: "ok", results: [
+            AcoustIDResult(score: 0.95, recordings: [AcoustIDRecording(id: secondID), AcoustIDRecording(id: firstID)])
+        ])
+        XCTAssertEqual(MusicRecognitionService.recordingMatches(from: response).map(\.id), [firstID, secondID])
+    }
+
+    func testIdentifyPreservesTiedRecordingsBeyondFiveBeforeChoosingAnAlbum() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let source = directory.appendingPathComponent("sample.mp3")
+        try Data("fixture".utf8).write(to: source)
+        let ids = (1...6).map { "10000000-0000-0000-0000-\(String(format: "%012d", $0))" }
+        RecognitionURLProtocol.handler = { request in
+            if request.url?.host == "api.acoustid.org" {
+                let results = ids.reversed().map { ["id": $0, "title": "Song"] }
+                return (200, try JSONSerialization.data(withJSONObject: [
+                    "status": "ok", "results": [["score": 0.95, "recordings": results]]
+                ]))
+            }
+            let id = try XCTUnwrap(request.url?.lastPathComponent)
+            let album = id == ids.first || id == ids.last ? "Existing Album" : "Other \(id)"
+            return (200, try JSONSerialization.data(withJSONObject: [
+                "id": id, "title": "Song", "releases": [["id": "release-\(id)", "title": album]]
+            ]))
+        }
+        let service = MusicRecognitionService(session: session(), minimumMusicBrainzInterval: 0,
+            minimumAcoustIDInterval: 0, fingerprintProvider: { _ in ("fingerprint", 120) })
+        let candidates = try await service.identify(url: source, apiKey: "key")
+        XCTAssertEqual(candidates.map(\.recordingID), ids)
+        guard case .ambiguous = MusicRecognitionService.automaticMatch(from: candidates, originalAlbum: "Existing Album") else {
+            return XCTFail("The sixth tied recording must prevent the first album from appearing unique")
+        }
+    }
+
+    func testIncompleteReleaseLookupCannotResolveTopTieButAllowsUniquePartialMatch() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let source = directory.appendingPathComponent("sample.mp3")
+        try Data("fixture".utf8).write(to: source)
+        let completeID = recordingID
+        let partialID = "10000000-0000-0000-0000-000000000002"
+        let release = releaseID
+        RecognitionURLProtocol.handler = { request in
+            if request.url?.host == "api.acoustid.org" {
+                return (200, try JSONSerialization.data(withJSONObject: [
+                    "status": "ok", "results": [["score": 0.96, "recordings": [
+                        ["id": completeID, "title": "Complete song"],
+                        ["id": partialID, "title": "Partial song"]
+                    ]]]
+                ]))
+            }
+            if request.url?.lastPathComponent == partialID { return (500, Data()) }
+            return (200, try JSONSerialization.data(withJSONObject: [
+                "id": completeID, "title": "Complete song",
+                "releases": [["id": release, "title": "Existing Album"]]
+            ]))
+        }
+        let service = MusicRecognitionService(session: session(), minimumMusicBrainzInterval: 0,
+            minimumAcoustIDInterval: 0, fingerprintProvider: { _ in ("fingerprint", 120) })
+        let candidates = try await service.identify(url: source, apiKey: "key")
+        XCTAssertEqual(candidates.count, 2)
+        let complete = try XCTUnwrap(candidates.first { $0.recordingID == completeID })
+        let partial = try XCTUnwrap(candidates.first { $0.recordingID == partialID })
+        XCTAssertFalse(complete.hasIncompleteReleaseInfo)
+        XCTAssertTrue(partial.hasIncompleteReleaseInfo)
+        XCTAssertEqual(partial.tags.title, "Partial song")
+        guard case .ambiguous = MusicRecognitionService.automaticMatch(from: candidates, originalAlbum: "Existing Album") else {
+            return XCTFail("An unavailable edition list cannot prove a unique album match")
+        }
+        guard case .selected(let selected) = MusicRecognitionService.automaticMatch(from: [partial], originalAlbum: "Existing Album") else {
+            return XCTFail("A unique highest recording can still supply its partial title and artist")
+        }
+        XCTAssertEqual(selected.id, partial.id)
+    }
+
+    func testTextSearchResultsHaveNoFingerprintScoreAndCannotAutomaticallyMatch() async throws {
+        let id = recordingID
+        RecognitionURLProtocol.handler = { _ in
+            (200, Data("{\"recordings\":[{\"id\":\"\(id)\",\"title\":\"Song\",\"score\":100}]}".utf8))
+        }
+        let service = MusicRecognitionService(session: session(), minimumMusicBrainzInterval: 0)
+        let candidates = try await service.search(title: "Song", artist: "")
+        XCTAssertEqual(candidates.count, 1)
+        XCTAssertNil(candidates.first?.score)
+        guard case .noMatch = MusicRecognitionService.automaticMatch(from: candidates, originalAlbum: "") else {
+            return XCTFail("MusicBrainz text relevance is not a fingerprint score")
+        }
+    }
+
     func testMissingKeyDoesNotTouchAudioOrNetwork() async {
         let service = MusicRecognitionService(session: session(), fingerprintProvider: { _ in
             XCTFail("Missing-key path must not fingerprint files")
@@ -217,6 +419,11 @@ final class MusicRecognitionTests: XCTestCase {
         XCTAssertFalse(message.contains("private-key"))
         XCTAssertFalse(message.contains("DecodingError"))
         XCTAssertFalse(message.contains(L10n.text("unavailable", "暂不可用")))
+    }
+
+    private func candidate(_ id: String, score: Double?, album: String = "") -> MetadataCandidate {
+        MetadataCandidate(id: id, recordingID: recordingID, releaseID: id,
+                          tags: AudioTags(title: "Song", album: album), score: score, detail: "")
     }
 
     private func identificationError(status: Int, body: String) async throws -> String {

@@ -1,9 +1,17 @@
 import Foundation
 
+enum AutomaticMatchDecision: Sendable {
+    case selected(MetadataCandidate)
+    case belowThreshold
+    case ambiguous
+    case noMatch
+}
+
 /// Personal-use AcoustID + MusicBrainz integration. No audio is uploaded.
-/// MusicBrainz release selection is always explicit; a recording is not an album edition.
+/// A recording score applies to every release edition of that recording.
 actor MusicRecognitionService {
     typealias FingerprintProvider = @Sendable (URL) async throws -> (fingerprint: String, duration: Double)
+    static let automaticMatchThreshold = 0.9
 
     private let session: URLSession
     private let fingerprintProvider: FingerprintProvider
@@ -71,8 +79,11 @@ actor MusicRecognitionService {
             throw Self.acoustIDError(response.error)
         }
         let matches = Self.recordingMatches(from: response)
+        // Preserve ties at the lookup boundary: cutting a tie can make an album
+        // appear to be the only match when another equally scored edition exists.
+        let minimumLookupScore = matches.prefix(5).last?.score ?? 0
         var candidates: [MetadataCandidate] = []
-        for match in matches.prefix(5) {
+        for match in matches.prefix(while: { $0.score >= minimumLookupScore }) {
             try Task.checkCancellation()
             do {
                 let recording = try await recording(id: match.id)
@@ -86,10 +97,11 @@ actor MusicRecognitionService {
                 candidates.append(MetadataCandidate(id: match.id, recordingID: match.id,
                     tags: tags, duration: match.duration, score: match.score,
                     detail: L10n.text("AcoustID · album details unavailable; try again later",
-                                      "AcoustID · 暂时无法获取专辑信息，可稍后重试")))
+                                      "AcoustID · 暂时无法获取专辑信息，可稍后重试"),
+                    hasIncompleteReleaseInfo: true))
             }
         }
-        return Self.uniqueCandidates(candidates)
+        return Self.rankedCandidates(candidates)
     }
 
     func search(title: String, artist: String) async throws -> [MetadataCandidate] {
@@ -113,7 +125,7 @@ actor MusicRecognitionService {
         return results
     }
 
-    /// Look up only the edition the person selected, and fill track/disc only if unambiguous.
+    /// Look up the selected edition, and fill track/disc only if unambiguous.
     func resolve(_ candidate: MetadataCandidate) async throws -> MetadataCandidate {
         guard let releaseID = candidate.releaseID else { return candidate }
         let release: MBRelease
@@ -326,8 +338,9 @@ actor MusicRecognitionService {
                 duration: duration, score: fingerprintScore,
                 detail: L10n.text("MusicBrainz · recording only", "MusicBrainz · 仅录音信息"))]
         }
-        // A bounded edition list makes selection usable; do not rank by an invented probability.
-        return releases.prefix(12).map { release in
+        // Every returned edition is needed to detect ties and match an existing album.
+        // Editions share the recording's score; they have no independent fingerprint score.
+        return releases.map { release in
             base.album = release.title
             base.albumArtist = MBArtistCredit.display(release.artistCredit)
             base.year = validYear(release.date)
@@ -374,6 +387,50 @@ actor MusicRecognitionService {
         return year.allSatisfy(\.isNumber) ? year : ""
     }
 
+    static func rankedCandidates(_ candidates: [MetadataCandidate]) -> [MetadataCandidate] {
+        var best: [String: MetadataCandidate] = [:]
+        for candidate in candidates {
+            if let previous = best[candidate.id],
+               (validFingerprintScore(previous.score) ?? -1) >= (validFingerprintScore(candidate.score) ?? -1) {
+                continue
+            }
+            best[candidate.id] = candidate
+        }
+        return best.values.sorted {
+            let leftScore = validFingerprintScore($0.score) ?? -1
+            let rightScore = validFingerprintScore($1.score) ?? -1
+            return leftScore == rightScore ? $0.id < $1.id : leftScore > rightScore
+        }
+    }
+
+    static func automaticMatch(from candidates: [MetadataCandidate], originalAlbum: String) -> AutomaticMatchDecision {
+        let ranked = rankedCandidates(candidates)
+        guard let first = ranked.first, let highestScore = validFingerprintScore(first.score) else {
+            return .noMatch
+        }
+        guard highestScore >= automaticMatchThreshold else { return .belowThreshold }
+        let highestMatches = ranked.prefix { validFingerprintScore($0.score) == highestScore }
+        if highestMatches.count == 1 { return .selected(first) }
+        // An unavailable edition list might contain the same album; partial results
+        // cannot establish a unique album preference among tied recordings.
+        guard !highestMatches.contains(where: \.hasIncompleteReleaseInfo) else { return .ambiguous }
+
+        let album = normalizedAlbum(originalAlbum)
+        guard !album.isEmpty else { return .ambiguous }
+        let albumMatches = highestMatches.filter { normalizedAlbum($0.tags.album) == album }
+        guard albumMatches.count == 1, let match = albumMatches.first else { return .ambiguous }
+        return .selected(match)
+    }
+
+    private static func validFingerprintScore(_ score: Double?) -> Double? {
+        guard let score, score.isFinite, (0...1).contains(score) else { return nil }
+        return score
+    }
+
+    private static func normalizedAlbum(_ album: String) -> String {
+        album.split(whereSeparator: \.isWhitespace).joined(separator: " ").lowercased()
+    }
+
     private static func uniqueCandidates(_ candidates: [MetadataCandidate]) -> [MetadataCandidate] {
         var seen: Set<String> = []
         return candidates.filter { seen.insert($0.id).inserted }
@@ -399,7 +456,7 @@ actor MusicRecognitionService {
                     title: recording.title, artist: artist, duration: recording.duration)
             }
         }
-        return best.values.sorted { $0.score > $1.score }
+        return best.values.sorted { $0.score == $1.score ? $0.id < $1.id : $0.score > $1.score }
     }
 }
 

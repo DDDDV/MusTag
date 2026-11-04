@@ -9,6 +9,7 @@ final class AppModel: ObservableObject {
     @Published var documents: [AudioDocument] = []
     @Published var folders: [AudioFolder] = []
     @Published var candidates: [UUID: [MetadataCandidate]] = [:]
+    @Published var appliedCandidateIDs: [UUID: String] = [:]
     @Published var backupRecords: [BackupRecord] = []
     @Published var apiKey = APIKeyStore.load()
     @Published var operation: String?
@@ -39,7 +40,12 @@ final class AppModel: ObservableObject {
          recognition: MusicRecognitionService = MusicRecognitionService(),
          coverArt: CoverArtService = CoverArtService()) {
         #if DEBUG
-        if Self.isUITesting && ProcessInfo.processInfo.arguments.contains("--ui-testing-with-cover") {
+        if Self.isUITesting && ProcessInfo.processInfo.arguments.contains("--ui-testing-auto-match") {
+            let session = CoverArtUITestSupport.session()
+            self.recognition = MusicRecognitionService(session: session, minimumMusicBrainzInterval: 0,
+                minimumAcoustIDInterval: 0, fingerprintProvider: { _ in ("ui-test-fingerprint", 120) })
+            self.coverArt = CoverArtService(session: session)
+        } else if Self.isUITesting && ProcessInfo.processInfo.arguments.contains("--ui-testing-with-cover") {
             let session = CoverArtUITestSupport.session()
             self.recognition = MusicRecognitionService(session: session, minimumMusicBrainzInterval: 0)
             self.coverArt = CoverArtService(session: session)
@@ -59,6 +65,9 @@ final class AppModel: ObservableObject {
             self.fileStore = AudioFileStore(codec: NativeMetadataCodec(), storageDirectory: directory)
             uiTestDirectory = directory
             apiKey = ""
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("--ui-testing-auto-match") { apiKey = "ui-test-key" }
+            #endif
         } else {
             self.fileStore = AudioFileStore(codec: NativeMetadataCodec())
             uiTestDirectory = nil
@@ -128,53 +137,18 @@ final class AppModel: ObservableObject {
         guard !isWorking, let index = documents.firstIndex(where: { $0.id == id }) else { return }
         documents[index].draft = tags
         documents[index].error = nil
+        appliedCandidateIDs.removeValue(forKey: id)
         schedulePersistence()
     }
 
     func useCandidate(_ candidate: MetadataCandidate, for id: UUID) {
         guard !isWorking, let document = document(id) else { return }
         begin(L10n.text("Loading release", "正在读取发行版本"), total: 1)
+        currentFile = document.fileName
         operationTask = Task {
             defer { finish() }
             do {
-                let resolved = try await recognition.resolve(candidate)
-                var tags = document.draft
-                // Empty provider fields never erase existing user metadata.
-                for field in TagField.allCases {
-                    let proposed = field.value(in: resolved.tags)
-                    if !proposed.isEmpty { field.set(proposed, in: &tags) }
-                }
-                // A newly selected release must never retain another release's pending cover.
-                var artwork = document.originalArtwork
-                var coverNotice: String?
-                if let releaseID = resolved.releaseID {
-                    operation = L10n.text("Downloading cover", "正在下载封面")
-                    do {
-                        if let downloaded = try await coverArt.frontCover(releaseID: releaseID) {
-                            artwork = downloaded
-                        } else {
-                            coverNotice = L10n.text(
-                                "This release has no front cover. Tags were added to the draft; the original cover was kept.",
-                                "此发行版本暂无正面封面。文字标签已填入草稿，原封面保持不变。")
-                        }
-                    } catch is CancellationError { throw CancellationError() }
-                    catch {
-                        try Task.checkCancellation()
-                        coverNotice = L10n.text(
-                            "Cover download failed. Tags were added to the draft; the original cover was kept. Select the release again to retry.\n",
-                            "封面下载失败。文字标签已填入草稿，原封面保持不变。可再次选择此版本重试。\n") + error.localizedDescription
-                    }
-                } else {
-                    coverNotice = L10n.text("This match has no release to look up a cover. The original cover was kept.",
-                                            "此匹配没有可用于查找封面的发行版本，原封面保持不变。")
-                }
-                try Task.checkCancellation()
-                if let index = documents.firstIndex(where: { $0.id == id }) {
-                    documents[index].draft = tags
-                    documents[index].draftArtwork = artwork
-                    documents[index].error = nil
-                }
-                notice = coverNotice
+                notice = try await applyCandidate(candidate, to: document)
                 completedCount = 1
                 await persistNow()
             } catch is CancellationError { }
@@ -182,11 +156,58 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Prepare the complete selection before changing the draft, so cancellation is atomic per file.
+    private func applyCandidate(_ candidate: MetadataCandidate, to document: AudioDocument) async throws -> String? {
+        operation = L10n.text("Loading release", "正在读取发行版本")
+        let resolved = try await recognition.resolve(candidate)
+        var tags = document.draft
+        for field in TagField.allCases {
+            let proposed = field.value(in: resolved.tags)
+            // Empty provider fields never erase existing user metadata.
+            if !proposed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                field.set(proposed, in: &tags)
+            }
+        }
+        // A newly selected release must never retain another release's pending cover.
+        var artwork = document.originalArtwork
+        var coverNotice: String?
+        if let releaseID = resolved.releaseID {
+            operation = L10n.text("Downloading cover", "正在下载封面")
+            do {
+                if let downloaded = try await coverArt.frontCover(releaseID: releaseID) {
+                    artwork = downloaded
+                } else {
+                    coverNotice = L10n.text(
+                        "This release has no front cover. Tags were added to the draft; the original cover was kept.",
+                        "此发行版本暂无正面封面。文字标签已填入草稿，原封面保持不变。")
+                }
+            } catch is CancellationError { throw CancellationError() }
+            catch {
+                try Task.checkCancellation()
+                coverNotice = L10n.text(
+                    "Cover download failed. Tags were added to the draft; the original cover was kept. Select the release again to retry.\n",
+                    "封面下载失败。文字标签已填入草稿，原封面保持不变。可再次选择此版本重试。\n") + error.localizedDescription
+            }
+        } else {
+            coverNotice = L10n.text("This match has no release to look up a cover. The original cover was kept.",
+                                    "此匹配没有可用于查找封面的发行版本，原封面保持不变。")
+        }
+        try Task.checkCancellation()
+        if let index = documents.firstIndex(where: { $0.id == document.id }) {
+            documents[index].draft = tags
+            documents[index].draftArtwork = artwork
+            documents[index].error = coverNotice
+            appliedCandidateIDs[document.id] = candidate.id
+        }
+        return coverNotice
+    }
+
     func discardChanges(for id: UUID) {
         guard !isWorking, let index = documents.firstIndex(where: { $0.id == id }) else { return }
         documents[index].draft = documents[index].original
         documents[index].draftArtwork = documents[index].originalArtwork
         documents[index].error = nil
+        appliedCandidateIDs.removeValue(forKey: id)
         schedulePersistence()
     }
 
@@ -199,7 +220,10 @@ final class AppModel: ObservableObject {
     func remove(_ ids: Set<UUID>) {
         guard !isWorking else { return }
         documents.removeAll { ids.contains($0.id) }
-        ids.forEach { candidates.removeValue(forKey: $0) }
+        ids.forEach {
+            candidates.removeValue(forKey: $0)
+            appliedCandidateIDs.removeValue(forKey: $0)
+        }
         schedulePersistence()
     }
 
@@ -210,7 +234,10 @@ final class AppModel: ObservableObject {
         for index in documents.indices {
             documents[index].importFolderIDs?.remove(folder.id)
         }
-        removedIDs.forEach { candidates.removeValue(forKey: $0) }
+        removedIDs.forEach {
+            candidates.removeValue(forKey: $0)
+            appliedCandidateIDs.removeValue(forKey: $0)
+        }
         folders.removeAll { $0.id == folder.id }
         schedulePersistence()
     }
@@ -254,6 +281,7 @@ final class AppModel: ObservableObject {
                         }
                         documents[index] = refreshed
                         candidates.removeValue(forKey: existing.id)
+                        appliedCandidateIDs.removeValue(forKey: existing.id)
                     } else { documents.append(incoming) }
                 }
                 await persistNow()
@@ -270,7 +298,7 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func identify(_ ids: Set<UUID>) {
+    func identify(_ ids: Set<UUID>, automaticallyApply: Bool = false) {
         guard !isWorking else { return }
         guard hasAPIKey else { showsSettings = true; return }
         let items = documents.filter { ids.contains($0.id) }
@@ -280,25 +308,74 @@ final class AppModel: ObservableObject {
         operationTask = Task {
             defer { finish() }
             var failures: [String] = []
+            var applied = 0
+            var pending = 0
+            var unmatched = 0
+            var coverWarnings = 0
             for item in items {
                 if Task.isCancelled { break }
                 currentFile = item.fileName
+                operation = L10n.text("Identifying", "正在识别")
+                candidates.removeValue(forKey: item.id)
+                appliedCandidateIDs.removeValue(forKey: item.id)
                 do {
                     let url = try accessibleURL(for: item)
                     let scoped = url.startAccessingSecurityScopedResource()
                     defer { if scoped { url.stopAccessingSecurityScopedResource() } }
                     let matches = try await recognition.identify(url: url, apiKey: key)
+                    try Task.checkCancellation()
                     candidates[item.id] = matches
-                    setError(matches.isEmpty ? L10n.text("No match found. Try a title search or edit manually.", "未找到匹配，可按歌名搜索或手动编辑。") : nil, for: item.id)
+                    if automaticallyApply {
+                        switch MusicRecognitionService.automaticMatch(from: matches, originalAlbum: item.original.album) {
+                        case .selected(let candidate):
+                            let warning = try await applyCandidate(candidate, to: item)
+                            applied += 1
+                            if warning != nil { coverWarnings += 1 }
+                        case .belowThreshold:
+                            pending += 1
+                            setError(L10n.text("Best similarity is below 90%. Choose a match manually; your draft was kept.",
+                                               "最高相似度低于 90%，请手动选择匹配；已有草稿保持不变。"), for: item.id)
+                        case .ambiguous:
+                            pending += 1
+                            setError(L10n.text("Several matches share the highest similarity. Choose a release manually; your draft was kept.",
+                                               "存在多个最高相似度版本，请手动选择；已有草稿保持不变。"), for: item.id)
+                        case .noMatch:
+                            unmatched += 1
+                            setError(L10n.text("No match found. Try a title search or edit manually.",
+                                               "未找到匹配，可按歌名搜索或手动编辑。"), for: item.id)
+                        }
+                    } else {
+                        setError(matches.isEmpty ? L10n.text("No match found. Try a title search or edit manually.", "未找到匹配，可按歌名搜索或手动编辑。") : nil, for: item.id)
+                    }
                 } catch is CancellationError { break }
                 catch {
                     setError(error.localizedDescription, for: item.id)
                     failures.append(item.fileName + ": " + error.localizedDescription)
                 }
                 completedCount += 1
+                await persistNow()
             }
+            // begin() cancels pending debounced edits; persist even if the first file was cancelled.
             await persistNow()
-            if !failures.isEmpty {
+            if automaticallyApply {
+                var lines = [
+                    L10n.text("Added to drafts: \(applied)", "已填入草稿：\(applied)"),
+                    L10n.text("Needs manual selection: \(pending)", "待手动确认：\(pending)"),
+                    L10n.text("No match: \(unmatched)", "未找到匹配：\(unmatched)"),
+                    L10n.text("Failed: \(failures.count)", "处理失败：\(failures.count)")
+                ]
+                if coverWarnings > 0 {
+                    lines.append(L10n.text("Original cover kept: \(coverWarnings)", "未获取新封面，保留原封面：\(coverWarnings)"))
+                }
+                if Task.isCancelled {
+                    lines.append(L10n.text("Stopped. Unprocessed: \(items.count - completedCount)",
+                                           "已停止，尚未处理：\(items.count - completedCount)"))
+                }
+                lines.append(L10n.text("Review the drafts before saving to your files.", "请预览草稿，确认后保存到文件。"))
+                lines.append(contentsOf: failures.prefix(5))
+                if let persistenceNotice = notice { lines.append(persistenceNotice) }
+                notice = lines.joined(separator: "\n")
+            } else if !failures.isEmpty {
                 notice = failures.prefix(5).joined(separator: "\n")
             }
         }
@@ -317,6 +394,7 @@ final class AppModel: ObservableObject {
             do {
                 let matches = try await recognition.search(title: title, artist: artist)
                 candidates[id] = matches
+                appliedCandidateIDs.removeValue(forKey: id)
                 setError(matches.isEmpty ? L10n.text("No results. Try another title or artist.", "没有找到结果，请调整歌名或艺术家。") : nil, for: id)
                 completedCount = 1
                 await persistNow()
@@ -369,6 +447,8 @@ final class AppModel: ObservableObject {
                     restored.importFolderIDs = restored.importFolderIDs?.intersection(folders.map(\.id))
                     documents.append(restored)
                 }
+                appliedCandidateIDs.removeValue(forKey: restored.id)
+                candidates.removeValue(forKey: restored.id)
                 completedCount = 1
                 await persistNow()
                 await refreshBackups()

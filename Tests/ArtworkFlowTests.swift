@@ -247,6 +247,326 @@ final class ArtworkFlowTests: XCTestCase {
     }
 }
 
+final class BatchMatchingFlowTests: XCTestCase {
+    override func tearDown() {
+        ArtworkFlowURLProtocol.handler = nil
+        super.tearDown()
+    }
+
+    @MainActor
+    func testBatchAppliesNinetyPercentToDraftAndLeavesLowNoMatchAndUnselectedFilesAlone() async throws {
+        let context = try await context([
+            Fixture(name: "boundary", score: 0.9),
+            Fixture(name: "low", score: 0.8999),
+            Fixture(name: "missing", score: nil),
+            Fixture(name: "unselected")
+        ])
+        defer { context.cleanUp() }
+        let boundary = try context.document("boundary")
+        let low = try context.document("low")
+        let missing = try context.document("missing")
+        let unselected = try context.document("unselected")
+        var previousDraft = low.draft
+        previousDraft.title = "My unsaved edit"
+        context.model.updateDraft(previousDraft, for: low.id)
+
+        context.model.identify([boundary.id, low.id, missing.id], automaticallyApply: true)
+        try await waitUntilIdle(context.model)
+
+        let matched = try XCTUnwrap(context.model.document(boundary.id))
+        XCTAssertEqual(matched.draft.title, "Matched boundary")
+        XCTAssertEqual(matched.draft.album, "Matched album")
+        XCTAssertEqual(matched.draft.genre, boundary.original.genre, "Empty provider fields keep the previous value")
+        XCTAssertEqual(matched.draftArtwork, context.downloadedCover)
+        XCTAssertEqual(matched.original, boundary.original)
+        XCTAssertNotNil(context.model.appliedCandidateIDs[boundary.id])
+        XCTAssertEqual(context.model.document(low.id)?.draft, previousDraft)
+        XCTAssertNotNil(context.model.document(low.id)?.error)
+        XCTAssertEqual(context.model.document(missing.id)?.draft, missing.draft)
+        XCTAssertNotNil(context.model.document(missing.id)?.error)
+        XCTAssertEqual(context.model.document(unselected.id)?.draft, unselected.draft)
+        XCTAssertNil(context.model.candidates[unselected.id])
+        XCTAssertNil(context.model.appliedCandidateIDs[low.id])
+        XCTAssertEqual(context.model.completedCount, 3)
+        XCTAssertNotNil(context.model.notice)
+        let persisted = try await context.store.loadLibrary()
+        XCTAssertEqual(persisted.documents.first { $0.id == boundary.id }?.draft, matched.draft)
+        try await assertSourcesUnchanged(context)
+    }
+
+    @MainActor
+    func testTiedEditionsUseOriginalAlbumAndUnresolvedTiesKeepExistingDraft() async throws {
+        let context = try await context([
+            Fixture(name: "preferred", originalAlbum: "Original album", releaseTitles: ["Compilation", "Original album"]),
+            Fixture(name: "ambiguous", originalAlbum: "Unknown album", releaseTitles: ["Edition A", "Edition B"])
+        ])
+        defer { context.cleanUp() }
+        let preferred = try context.document("preferred")
+        let ambiguous = try context.document("ambiguous")
+        var preferredDraft = preferred.draft
+        preferredDraft.album = "Compilation"
+        context.model.updateDraft(preferredDraft, for: preferred.id)
+        var ambiguousDraft = ambiguous.draft
+        ambiguousDraft.title = "Keep this edit"
+        context.model.updateDraft(ambiguousDraft, for: ambiguous.id)
+
+        context.model.identify([preferred.id, ambiguous.id], automaticallyApply: true)
+        try await waitUntilIdle(context.model)
+
+        XCTAssertEqual(context.model.document(preferred.id)?.draft.album, "Original album",
+                       "Tie breaking uses the original file album rather than a pending draft")
+        let chosenID = try XCTUnwrap(context.model.appliedCandidateIDs[preferred.id])
+        let chosen = try XCTUnwrap(context.model.candidates[preferred.id]?.first { $0.id == chosenID })
+        XCTAssertEqual(chosen.tags.album, "Original album")
+        XCTAssertEqual(context.model.document(ambiguous.id)?.draft, ambiguousDraft)
+        XCTAssertEqual(context.model.document(ambiguous.id)?.draftArtwork, ambiguous.originalArtwork)
+        XCTAssertNil(context.model.appliedCandidateIDs[ambiguous.id])
+        XCTAssertNotNil(context.model.document(ambiguous.id)?.error)
+        XCTAssertEqual(context.model.candidates[ambiguous.id]?.count, 2)
+        try await assertSourcesUnchanged(context)
+    }
+
+    @MainActor
+    func testLookupFailureDoesNotStopBatchAndCoverFailureStillAppliesText() async throws {
+        let context = try await context([
+            Fixture(name: "failed", lookupFails: true),
+            Fixture(name: "cover-failed", coverStatus: 500),
+            Fixture(name: "success")
+        ])
+        defer { context.cleanUp() }
+        let failed = try context.document("failed")
+        let coverFailed = try context.document("cover-failed")
+        let success = try context.document("success")
+
+        context.model.identify(Set(context.model.documents.map(\.id)), automaticallyApply: true)
+        try await waitUntilIdle(context.model)
+
+        XCTAssertEqual(context.model.document(failed.id)?.draft, failed.draft)
+        XCTAssertNotNil(context.model.document(failed.id)?.error)
+        XCTAssertEqual(context.model.document(coverFailed.id)?.draft.title, "Matched cover-failed")
+        XCTAssertEqual(context.model.document(coverFailed.id)?.draftArtwork, coverFailed.originalArtwork)
+        XCTAssertNotNil(context.model.appliedCandidateIDs[coverFailed.id])
+        XCTAssertEqual(context.model.document(success.id)?.draft.title, "Matched success")
+        XCTAssertEqual(context.model.document(success.id)?.draftArtwork, context.downloadedCover)
+        XCTAssertEqual(context.model.completedCount, 3)
+        XCTAssertNotNil(context.model.notice)
+        try await assertSourcesUnchanged(context)
+    }
+
+    @MainActor
+    func testCancellingLaterFileRetainsCompletedDraftAndPersistsIt() async throws {
+        let stalled = expectation(description: "Second file reached cover download")
+        let context = try await context([
+            Fixture(name: "completed"),
+            Fixture(name: "cancelled", stallsCover: true),
+            Fixture(name: "pending")
+        ], onStalledCover: { stalled.fulfill() })
+        defer { context.cleanUp() }
+        let completed = try context.document("completed")
+        let cancelled = try context.document("cancelled")
+        let pending = try context.document("pending")
+
+        context.model.identify(Set(context.model.documents.map(\.id)), automaticallyApply: true)
+        await fulfillment(of: [stalled], timeout: 5)
+        context.model.cancelOperation()
+        try await waitUntilIdle(context.model)
+
+        XCTAssertEqual(context.model.document(completed.id)?.draft.title, "Matched completed")
+        XCTAssertEqual(context.model.document(cancelled.id)?.draft, cancelled.draft)
+        XCTAssertEqual(context.model.document(cancelled.id)?.draftArtwork, cancelled.originalArtwork)
+        XCTAssertEqual(context.model.document(pending.id)?.draft, pending.draft)
+        XCTAssertNil(context.model.candidates[pending.id])
+        XCTAssertNil(context.model.appliedCandidateIDs[cancelled.id])
+        let persisted = try await context.store.loadLibrary()
+        XCTAssertEqual(persisted.documents.first { $0.id == completed.id }?.draft.title, "Matched completed")
+        XCTAssertEqual(persisted.documents.first { $0.id == cancelled.id }?.draft, cancelled.draft)
+        try await assertSourcesUnchanged(context)
+    }
+
+    @MainActor
+    func testCancellingFirstFilePersistsTheManualDraftPendingBeforeMatching() async throws {
+        let stalled = expectation(description: "First file reached cover download")
+        let context = try await context([
+            Fixture(name: "cancelled", stallsCover: true)
+        ], onStalledCover: { stalled.fulfill() })
+        defer { context.cleanUp() }
+        let document = try context.document("cancelled")
+        var manualDraft = document.draft
+        manualDraft.title = "Manual edit pending persistence"
+        context.model.updateDraft(manualDraft, for: document.id)
+
+        // Starting immediately cancels updateDraft's scheduled persistence.
+        context.model.identify([document.id], automaticallyApply: true)
+        await fulfillment(of: [stalled], timeout: 5)
+        context.model.cancelOperation()
+        try await waitUntilIdle(context.model)
+
+        XCTAssertEqual(context.model.document(document.id)?.draft, manualDraft)
+        XCTAssertEqual(context.model.document(document.id)?.draftArtwork, document.originalArtwork)
+        XCTAssertNil(context.model.appliedCandidateIDs[document.id])
+        let persisted = try await context.store.loadLibrary()
+        XCTAssertEqual(persisted.documents.first { $0.id == document.id }?.draft, manualDraft)
+        try await assertSourcesUnchanged(context)
+    }
+
+    private struct Fixture {
+        let name: String
+        var score: Double? = 0.96
+        var originalAlbum = "Original album"
+        var releaseTitles = ["Matched album"]
+        var lookupFails = false
+        var coverStatus = 200
+        var stallsCover = false
+    }
+
+    @MainActor
+    private func context(_ fixtures: [Fixture], onStalledCover: (() -> Void)? = nil) async throws -> Context {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let sample = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "sample", withExtension: "m4a", subdirectory: "Fixtures"))
+        let originalCover = try artwork(color: .red)
+        let downloadedCover = try artwork(color: .blue)
+        let codec = NativeMetadataCodec()
+        var sources: [URL] = []
+        var originalBytes: [URL: Data] = [:]
+        for fixture in fixtures {
+            let source = root.appendingPathComponent(fixture.name).appendingPathExtension("m4a")
+            try FileManager.default.copyItem(at: sample, to: source)
+            try codec.write(AudioTags(title: "Original \(fixture.name)", artist: "Original artist",
+                                      album: fixture.originalAlbum, genre: "Preserved genre"), to: source)
+            try codec.writeArtwork(originalCover, to: source)
+            sources.append(source)
+            originalBytes[source] = try Data(contentsOf: source)
+        }
+        let store = AudioFileStore(codec: codec, storageDirectory: root.appendingPathComponent("State"))
+        let imported = try await store.importFiles(from: sources)
+        XCTAssertTrue(imported.failures.isEmpty, imported.failures.joined(separator: "; "))
+        try await store.persistLibrary(AudioLibrary(documents: imported.documents, folders: []))
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [ArtworkFlowURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        let recognition = MusicRecognitionService(session: session, minimumMusicBrainzInterval: 0,
+                                                   minimumAcoustIDInterval: 0, fingerprintProvider: { url in
+            (url.deletingPathExtension().lastPathComponent, 120)
+        })
+        let model = AppModel(fileStore: store, recognition: recognition, coverArt: CoverArtService(session: session))
+        await model.load()
+        model.apiKey = "fixture-key"
+        installResponses(fixtures, cover: downloadedCover, onStalledCover: onStalledCover)
+        return Context(root: root, store: store, originalBytes: originalBytes,
+                       downloadedCover: downloadedCover, session: session, model: model)
+    }
+
+    private func installResponses(_ fixtures: [Fixture], cover: AudioArtwork, onStalledCover: (() -> Void)?) {
+        func recordingID(_ index: Int) -> String { String(format: "10000000-0000-0000-0000-%012d", index + 1) }
+        func releaseID(_ index: Int, _ edition: Int) -> String { String(format: "20000000-0000-0000-0000-%012d", index * 10 + edition + 1) }
+        func json(_ value: [String: Any]) throws -> ArtworkFlowURLProtocol.Response {
+            .init(status: 200, data: try JSONSerialization.data(withJSONObject: value))
+        }
+        ArtworkFlowURLProtocol.handler = { request in
+            let url = try XCTUnwrap(request.url)
+            if url.host == "api.acoustid.org" {
+                let body = try XCTUnwrap(Self.requestBody(request))
+                let fingerprint = URLComponents(string: "?" + body)?.queryItems?.first { $0.name == "fingerprint" }?.value
+                let index = try XCTUnwrap(fixtures.firstIndex { $0.name == fingerprint })
+                let fixture = fixtures[index]
+                if fixture.lookupFails { return .init(status: 500, data: Data()) }
+                guard let score = fixture.score else { return try json(["status": "ok", "results": []]) }
+                return try json(["status": "ok", "results": [["score": score,
+                    "recordings": [["id": recordingID(index), "title": "Matched \(fixture.name)"]]]]])
+            }
+            for (index, fixture) in fixtures.enumerated() {
+                if url.host == "musicbrainz.org", url.path == "/ws/2/recording/\(recordingID(index))" {
+                    let releases = fixture.releaseTitles.enumerated().map { edition, title in
+                        ["id": releaseID(index, edition), "title": title]
+                    }
+                    return try json(["id": recordingID(index), "title": "Matched \(fixture.name)", "releases": releases])
+                }
+                for (edition, title) in fixture.releaseTitles.enumerated() {
+                    let release = releaseID(index, edition)
+                    if url.host == "musicbrainz.org", url.path == "/ws/2/release/\(release)" {
+                        return try json(["id": release, "title": title])
+                    }
+                    if url.host == "coverartarchive.org", url.path.hasPrefix("/release/\(release)/") {
+                        if fixture.stallsCover {
+                            onStalledCover?()
+                            return .init(status: 200, data: Data(), stalls: true)
+                        }
+                        return .init(status: fixture.coverStatus, data: fixture.coverStatus == 200 ? cover.data : Data())
+                    }
+                }
+            }
+            XCTFail("Unexpected batch request: \(url.absoluteString)")
+            throw URLError(.unsupportedURL)
+        }
+    }
+
+    private static func requestBody(_ request: URLRequest) -> String? {
+        if let data = request.httpBody { return String(data: data, encoding: .utf8) }
+        guard let stream = request.httpBodyStream else { return nil }
+        stream.open()
+        defer { stream.close() }
+        var data = Data()
+        var bytes = [UInt8](repeating: 0, count: 1024)
+        while stream.hasBytesAvailable {
+            let count = stream.read(&bytes, maxLength: bytes.count)
+            guard count > 0 else { break }
+            data.append(contentsOf: bytes.prefix(count))
+        }
+        return String(data: data, encoding: .utf8)
+    }
+
+    @MainActor
+    private func assertSourcesUnchanged(_ context: Context, file: StaticString = #filePath, line: UInt = #line) async throws {
+        for (url, bytes) in context.originalBytes {
+            XCTAssertEqual(try Data(contentsOf: url), bytes, file: file, line: line)
+        }
+        let backups = try await context.store.backups()
+        XCTAssertTrue(backups.isEmpty, "Auto matching must not save files or create backups", file: file, line: line)
+    }
+
+    @MainActor
+    private func waitUntilIdle(_ model: AppModel) async throws {
+        let deadline = Date().addingTimeInterval(8)
+        while model.isWorking, Date() < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        guard !model.isWorking else {
+            model.cancelOperation()
+            XCTFail("Batch matching did not complete before the deadline")
+            throw URLError(.timedOut)
+        }
+    }
+
+    private func artwork(color: UIColor) throws -> AudioArtwork {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 8, height: 8), format: format).image { context in
+            color.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 8, height: 8))
+        }
+        return AudioArtwork(data: try XCTUnwrap(image.pngData()), mimeType: "image/png")
+    }
+
+    @MainActor
+    private struct Context {
+        let root: URL
+        let store: AudioFileStore
+        let originalBytes: [URL: Data]
+        let downloadedCover: AudioArtwork
+        let session: URLSession
+        let model: AppModel
+
+        func document(_ name: String) throws -> AudioDocument {
+            try XCTUnwrap(model.documents.first { $0.url.deletingPathExtension().lastPathComponent == name })
+        }
+
+        func cleanUp() {
+            model.cancelOperation()
+            session.invalidateAndCancel()
+            try? FileManager.default.removeItem(at: root)
+        }
+    }
+}
+
 private final class ArtworkFlowURLProtocol: URLProtocol {
     struct Response {
         var status: Int
