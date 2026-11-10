@@ -391,7 +391,7 @@ private struct AudioRow: View {
                     Text(L10n.text("Changes to review", "有待确认的修改"))
                         .font(.caption)
                         .foregroundStyle(.indigo)
-                } else if candidateCount > 0 {
+                } else if candidateCount > 1 {
                     Text(L10n.text("\(candidateCount) matches · choose a release", "\(candidateCount) 个匹配 · 请选择版本"))
                         .font(.caption)
                         .foregroundStyle(.indigo)
