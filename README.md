@@ -60,6 +60,8 @@ AcoustID Key 在 https://acoustid.org/new-application 注册应用后获取。�
 
 ShazamKit 和 MusicKit 均使用系统框架，不新增第三方依赖。AVFoundation 分块解码开头最多三个片段，每段通常最多 12 秒，并遵守 Shazam 曲库的查询时长限制；识别阶段只向 Apple 发送不可逆音频签名。未命中时尝试下一段，命中后停止；每次匹配最多等待 30 秒，可以取消。不使用麦克风，也不播放歌曲或写入 Shazam 历史。
 
+批量 Shazam 识别最多同时处理 3 个文件，每次匹配使用独立的 `SHSession`；单个文件内的片段仍依次尝试。并发上限覆盖解码、识别、Apple Music 补全和封面处理，是应用的资源控制值，不代表 Apple 公布的服务额度。文件完成后即更新进度并保存草稿，单个文件失败不影响其他文件；取消会停止排队并取消正在处理的任务，保留已完成的草稿。AcoustID 仍按文件串行处理并遵守原有请求间隔。
+
 首次真实识别前，需要在 [Apple Developer → Certificates, Identifiers & Profiles](https://developer.apple.com/help/account/services/shazamkit/) 中为实际使用的 App ID 启用 **App Services → ShazamKit**，并用对应开发团队签名。工程已链接系统 ShazamKit.framework，但代码和模拟测试无法替代账户侧服务启用。项目保留现有 Bundle Identifier/签名团队；若使用自己的团队，请同步修改 App ID 和签名配置。
 
 Apple Music 补全还需要在同一 App ID 的 **App Services → MusicKit** 中启用服务，使 MusicKit 能自动生成开发者令牌。工程已链接 MusicKit.framework，并在 Info.plist 配置 `NSAppleMusicUsageDescription`。首次需要查询 Apple Music 时，系统会请求音乐访问授权；拒绝后仍可使用 Shazam 基础识别和手动编辑，可在系统设置中重新授权。此流程只查询目录元数据，不读取个人曲库、修改播放列表或发起播放。
@@ -87,6 +89,11 @@ xcodebuild -project MusTag.xcodeproj -scheme MusTag \
 如果本机存在重名模拟器，请使用 `id=设备 UUID` 替代名称。测试不自动下载运行时或依赖。
 
 测试覆盖三种真实格式的标签读写/音频负载保持、真实指纹确定性、备份恢复和冲突、识别响应解析，以及基本 UI 流程。WebDAV、FTP 和 WiFi 传输使用本机回环测试服务器；音乐服务器与识别测试使用固定响应，不会消耗服务额度。
+
+### Shazam 并发识别验证（2026-11-10）
+
+- iPhone 16 Pro / iOS 18.6：两轮共 109 项相关单元测试通过。新增测试覆盖三路并发上限、乱序完成与动态补位、失败继续、取消与草稿持久化、仅查询候选、暂存文件清理，以及独立会话的取消和回调隔离；AcoustID 批量流程回归通过。
+- 使用本地音频和固定识别响应，未实测 Apple 在线服务的吞吐或限流。日志：`work/shazam-concurrency-test.log`、`work/shazam-concurrency-regression-test.log`。
 
 ### 连接下载与本地编辑验证（2026-11-10）
 

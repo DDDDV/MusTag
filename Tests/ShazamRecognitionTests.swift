@@ -136,6 +136,56 @@ final class ShazamRecognitionTests: XCTestCase {
         XCTAssertNil(session.delegate)
     }
 
+    @MainActor
+    func testConcurrentSessionsKeepCancellationAndCallbacksIndependent() async throws {
+        let started = expectation(description: "All independent sessions are matching")
+        started.expectedFulfillmentCount = 3
+        let sessions = (0..<3).map { _ in SilentShazamSession() }
+        let requests = sessions.map { ShazamMatchRequest(session: $0, timeout: 30) }
+        let signature = SHSignatureGenerator().signature()
+        for session in sessions { session.onMatch = { started.fulfill() } }
+        let tasks = requests.map { request in
+            Task { try await request.result(for: signature) }
+        }
+        defer { tasks.forEach { $0.cancel() } }
+
+        await fulfillment(of: [started], timeout: 3)
+        for (session, request) in zip(sessions, requests) {
+            XCTAssertEqual(session.matchCalls, 1)
+            XCTAssertTrue(session.delegate === request,
+                          "Every request must remain in flight with its own delegate")
+        }
+
+        tasks[0].cancel()
+        do {
+            _ = try await tasks[0].value
+            XCTFail("Expected the first request to be cancelled")
+        } catch { XCTAssertTrue(error is CancellationError) }
+        XCTAssertNil(sessions[0].delegate)
+        XCTAssertTrue(sessions[1].delegate === requests[1])
+        XCTAssertTrue(sessions[2].delegate === requests[2])
+
+        // Late callbacks for a cancelled session must not finish either live request.
+        requests[0].session(sessions[0], didNotFindMatchFor: signature, error: nil)
+        let serviceError = NSError(domain: SHErrorDomain, code: 202)
+        requests[2].session(sessions[2], didNotFindMatchFor: signature, error: serviceError)
+        do {
+            _ = try await tasks[2].value
+            XCTFail("Expected only the third request to report the service error")
+        } catch {
+            XCTAssertTrue(error is MusTagError)
+            XCTAssertTrue(error.localizedDescription.contains("ShazamKit 202"))
+        }
+        XCTAssertNil(sessions[2].delegate)
+        XCTAssertTrue(sessions[1].delegate === requests[1],
+                      "An unrelated error must leave the remaining session attached")
+
+        requests[1].session(sessions[1], didNotFindMatchFor: signature, error: nil)
+        let remainingResults = try await tasks[1].value
+        XCTAssertTrue(remainingResults.isEmpty)
+        XCTAssertTrue(sessions.allSatisfy { $0.delegate == nil })
+    }
+
     func testMetadataPreservesSourceIDsAndLinksWithoutInventingMissingFields() {
         let media = SHMediaItem(properties: [
             .shazamID: " 123 ", .title: " Song ", .artist: " Artist ", .genres: ["Pop", " "],
@@ -288,5 +338,9 @@ private actor ShazamMatchCounter {
 /// No call to super: the tests never send signatures to Apple's service.
 private final class SilentShazamSession: SHSession {
     var matchCalls = 0
-    override func match(_ signature: SHSignature) { matchCalls += 1 }
+    var onMatch: (() -> Void)?
+    override func match(_ signature: SHSignature) {
+        matchCalls += 1
+        onMatch?()
+    }
 }

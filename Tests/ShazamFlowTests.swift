@@ -11,6 +11,137 @@ final class ShazamFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testShazamBatchRunsThreeFilesAndReplenishesInCompletionOrder() async throws {
+        let gate = ShazamBatchGate()
+        let (context, documents) = try await batchContext(count: 6) { try await gate.match($0) }
+        defer { gate.cancelAll(); context.cleanUp() }
+        let selected = Array(documents.prefix(5))
+        let first = selected[0], failed = selected[1], third = selected[2]
+        let fourth = selected[3], unmatched = selected[4], unselected = documents[5]
+
+        context.model.identify(Set(selected.map(\.id)), automaticallyApply: true)
+        try await waitForBatch { gate.started.count == 3 }
+        XCTAssertEqual(Set(gate.started), Set(selected.prefix(3).map(\.fileName)))
+        XCTAssertEqual(gate.activeCount, 3)
+        XCTAssertEqual(context.model.completedCount, 0)
+
+        gate.succeed(third.fileName)
+        try await waitForBatch { gate.started.count == 4 && context.model.completedCount == 1 }
+        XCTAssertEqual(context.model.document(third.id)?.draft.title, "Matched \(third.fileName)")
+        XCTAssertEqual(context.model.document(first.id)?.draft, first.draft,
+                       "The first file can remain pending while later files enter the draft")
+        XCTAssertTrue(gate.started.contains(fourth.fileName))
+
+        gate.finish(failed.fileName, result: .failure(URLError(.cannotConnectToHost)))
+        try await waitForBatch { gate.started.count == 5 && context.model.completedCount == 2 }
+        XCTAssertNotNil(context.model.document(failed.id)?.error)
+        XCTAssertTrue(gate.started.contains(unmatched.fileName), "A failed file must release its batch slot")
+        gate.finish(unmatched.fileName, result: .success([]))
+        try await waitForBatch { context.model.completedCount == 3 }
+        gate.succeed(fourth.fileName)
+        gate.succeed(first.fileName)
+        try await waitUntilIdle(context.model)
+
+        XCTAssertEqual(gate.maximumActiveCount, 3)
+        XCTAssertEqual(gate.activeCount, 0)
+        XCTAssertEqual(context.model.completedCount, 5)
+        XCTAssertEqual(context.model.totalCount, 5)
+        XCTAssertEqual(Set(gate.started), Set(selected.map(\.fileName)))
+        let persisted = try await context.store.loadLibrary()
+        for document in [first, third, fourth] {
+            XCTAssertEqual(context.model.document(document.id)?.draft.title, "Matched \(document.fileName)")
+            XCTAssertEqual(context.model.candidates[document.id]?.first?.tags.title, "Matched \(document.fileName)")
+            XCTAssertNotNil(context.model.appliedCandidateIDs[document.id])
+            XCTAssertEqual(persisted.documents.first { $0.id == document.id }?.draft.title,
+                           "Matched \(document.fileName)")
+        }
+        for document in [failed, unmatched, unselected] {
+            XCTAssertEqual(context.model.document(document.id)?.draft, document.draft)
+            XCTAssertNil(context.model.appliedCandidateIDs[document.id])
+        }
+        XCTAssertNil(context.model.candidates[unselected.id])
+        XCTAssertEqual(context.model.candidates[unmatched.id]?.count, 0)
+        XCTAssertTrue(context.model.notice?.contains(L10n.text("Added to drafts: 3", "已填入草稿：3")) == true)
+        XCTAssertTrue(context.model.notice?.contains(L10n.text("No match: 1", "未找到匹配：1")) == true)
+        XCTAssertTrue(context.model.notice?.contains(L10n.text("Failed: 1", "处理失败：1")) == true)
+        try await assertBatchFilesUntouched(context, documents: documents, stagedURLs: gate.stagedURLs)
+    }
+
+    @MainActor
+    func testCancellingConcurrentShazamBatchCancelsActiveFilesAndKeepsCompletedDrafts() async throws {
+        let gate = ShazamBatchGate()
+        let (context, documents) = try await batchContext(count: 6) { try await gate.match($0) }
+        defer { gate.cancelAll(); context.cleanUp() }
+        let completed = documents[2]
+        for document in [documents[1], documents[5]] {
+            var draft = document.draft
+            draft.title = "Manual \(document.fileName)"
+            context.model.updateDraft(draft, for: document.id)
+        }
+        let draftsBeforeMatching = Dictionary(uniqueKeysWithValues: context.model.documents.map { ($0.id, $0.draft) })
+
+        context.model.identify(Set(documents.map(\.id)), automaticallyApply: true)
+        try await waitForBatch { gate.started.count == 3 }
+        gate.succeed(completed.fileName)
+        try await waitForBatch { gate.started.count == 4 && context.model.completedCount == 1 }
+        context.model.cancelOperation()
+        try await waitUntilIdle(context.model)
+
+        XCTAssertEqual(gate.maximumActiveCount, 3)
+        XCTAssertEqual(gate.activeCount, 0)
+        XCTAssertEqual(gate.started.count, 4, "Queued files must not start after cancellation")
+        XCTAssertEqual(gate.cancelled, Set([documents[0], documents[1], documents[3]].map(\.fileName)))
+        XCTAssertEqual(context.model.completedCount, 1, "Cancelled work is not counted as completed")
+        XCTAssertEqual(context.model.document(completed.id)?.draft.title, "Matched \(completed.fileName)")
+        XCTAssertNotNil(context.model.appliedCandidateIDs[completed.id])
+        XCTAssertNil(context.model.operation)
+        XCTAssertEqual(context.model.currentFile, "")
+        let persisted = try await context.store.loadLibrary()
+        for document in documents {
+            let expected = document.id == completed.id
+                ? context.model.document(completed.id)?.draft : draftsBeforeMatching[document.id]
+            XCTAssertEqual(context.model.document(document.id)?.draft, expected)
+            XCTAssertEqual(persisted.documents.first { $0.id == document.id }?.draft, expected)
+            if document.id != completed.id {
+                XCTAssertNil(context.model.appliedCandidateIDs[document.id])
+                XCTAssertNil(context.model.document(document.id)?.error)
+            }
+        }
+        for document in documents.suffix(2) { XCTAssertNil(context.model.candidates[document.id]) }
+        XCTAssertTrue(context.model.notice?.contains(L10n.text("Stopped. Unprocessed: 5", "已停止，尚未处理：5")) == true)
+        try await assertBatchFilesUntouched(context, documents: documents, stagedURLs: gate.stagedURLs)
+    }
+
+    @MainActor
+    func testConcurrentShazamCandidateLookupPreservesDrafts() async throws {
+        let gate = ShazamBatchGate()
+        let (context, documents) = try await batchContext(count: 4) { try await gate.match($0) }
+        defer { gate.cancelAll(); context.cleanUp() }
+        var manualDraft = documents[0].draft
+        manualDraft.title = "Manual edit before lookup"
+        context.model.updateDraft(manualDraft, for: documents[0].id)
+
+        context.model.identify(Set(documents.map(\.id)))
+        try await waitForBatch { gate.started.count == 3 }
+        gate.succeed(documents[1].fileName)
+        try await waitForBatch { gate.started.count == 4 && context.model.completedCount == 1 }
+        for document in [documents[3], documents[2], documents[0]] { gate.succeed(document.fileName) }
+        try await waitUntilIdle(context.model)
+
+        XCTAssertEqual(gate.maximumActiveCount, 3)
+        XCTAssertEqual(context.model.completedCount, 4)
+        XCTAssertTrue(context.model.appliedCandidateIDs.isEmpty)
+        let persisted = try await context.store.loadLibrary()
+        for document in documents {
+            let expected = document.id == documents[0].id ? manualDraft : document.draft
+            XCTAssertEqual(context.model.document(document.id)?.draft, expected)
+            XCTAssertEqual(persisted.documents.first { $0.id == document.id }?.draft, expected)
+            XCTAssertEqual(context.model.candidates[document.id]?.first?.tags.title, "Matched \(document.fileName)")
+        }
+        try await assertBatchFilesUntouched(context, documents: documents, stagedURLs: gate.stagedURLs)
+    }
+
+    @MainActor
     func testDefaultShazamNeedsNoKeyAndKeepsFieldsMissingFromRecognition() async throws {
         let match = ShazamRecognitionResult(id: "101", title: "Recognized title", artist: "")
         let context = try await context(matches: [match])
@@ -813,6 +944,53 @@ final class ShazamFlowTests: XCTestCase {
     }
 
     @MainActor
+    private func batchContext(count: Int, shazamProvider: @escaping MusicRecognitionService.ShazamProvider)
+        async throws -> (Context, [AudioDocument]) {
+        let context = try await context(matches: [], shazamProvider: shazamProvider)
+        var sources: [URL] = []
+        for index in 1..<count {
+            let source = context.root.appendingPathComponent("song-\(index).m4a")
+            try FileManager.default.copyItem(at: context.source, to: source)
+            sources.append(source)
+        }
+        let imported = try await context.store.importFiles(from: sources)
+        XCTAssertTrue(imported.failures.isEmpty, imported.failures.joined(separator: "; "))
+        let documents = [context.document] + imported.documents
+        XCTAssertEqual(documents.count, count)
+        context.model.documents = documents
+        await context.model.persistNow()
+        return (context, documents)
+    }
+
+    @MainActor
+    private func waitForBatch(_ condition: () -> Bool, file: StaticString = #filePath,
+                              line: UInt = #line) async throws {
+        let deadline = Date().addingTimeInterval(5)
+        while !condition(), Date() < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        guard condition() else {
+            XCTFail("Concurrent batch did not reach the expected state", file: file, line: line)
+            throw URLError(.timedOut)
+        }
+    }
+
+    @MainActor
+    private func assertBatchFilesUntouched(_ context: Context, documents: [AudioDocument], stagedURLs: [URL],
+                                           file: StaticString = #filePath, line: UInt = #line) async throws {
+        for document in documents {
+            XCTAssertEqual(try Data(contentsOf: document.url), context.originalBytes, file: file, line: line)
+            if let source = document.sourceURL {
+                XCTAssertEqual(try Data(contentsOf: source), context.originalBytes, file: file, line: line)
+            }
+        }
+        for url in stagedURLs {
+            XCTAssertFalse(FileManager.default.fileExists(atPath: url.deletingLastPathComponent().path),
+                           "Every completed or cancelled file must remove its temporary copy", file: file, line: line)
+        }
+        let backups = try await context.store.backups()
+        XCTAssertTrue(backups.isEmpty, file: file, line: line)
+    }
+
+    @MainActor
     private func waitUntilIdle(_ model: AppModel) async throws {
         let deadline = Date().addingTimeInterval(8)
         while model.isWorking, Date() < deadline { try await Task.sleep(for: .milliseconds(10)) }
@@ -859,6 +1037,54 @@ final class ShazamFlowTests: XCTestCase {
             preferences.removePersistentDomain(forName: suiteName)
             try? FileManager.default.removeItem(at: root)
         }
+    }
+}
+
+/// Explicit releases make overlap and completion order deterministic without timing network requests.
+@MainActor
+private final class ShazamBatchGate {
+    private var pending: [String: CheckedContinuation<[ShazamRecognitionResult], Error>] = [:]
+    private(set) var started: [String] = []
+    private(set) var stagedURLs: [URL] = []
+    private(set) var cancelled: Set<String> = []
+    private(set) var activeCount = 0
+    private(set) var maximumActiveCount = 0
+
+    func match(_ url: URL) async throws -> [ShazamRecognitionResult] {
+        try Task.checkCancellation()
+        let name = url.lastPathComponent
+        started.append(name)
+        stagedURLs.append(url)
+        activeCount += 1
+        maximumActiveCount = max(maximumActiveCount, activeCount)
+        defer { activeCount -= 1 }
+        return try await withTaskCancellationHandler(operation: {
+            try await withCheckedThrowingContinuation { pending[name] = $0 }
+        }, onCancel: {
+            Task { @MainActor in self.cancel(name) }
+        })
+    }
+
+    func succeed(_ name: String) {
+        finish(name, result: .success([ShazamRecognitionResult(id: name, title: "Matched \(name)", artist: "Artist")]))
+    }
+
+    func finish(_ name: String, result: Result<[ShazamRecognitionResult], Error>) {
+        guard let continuation = pending.removeValue(forKey: name) else {
+            XCTFail("No pending recognition for \(name)")
+            return
+        }
+        continuation.resume(with: result)
+    }
+
+    func cancelAll() {
+        for name in Array(pending.keys) { cancel(name) }
+    }
+
+    private func cancel(_ name: String) {
+        guard let continuation = pending.removeValue(forKey: name) else { return }
+        cancelled.insert(name)
+        continuation.resume(throwing: CancellationError())
     }
 }
 

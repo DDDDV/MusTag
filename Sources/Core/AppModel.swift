@@ -38,6 +38,10 @@ final class AppModel: ObservableObject {
     private let preferences: UserDefaults
     private var operationTask: Task<Void, Never>?
     private var persistenceTask: Task<Void, Never>?
+    // Bound the entire pipeline, including decoding, metadata and artwork, per file.
+    // This is an app resource limit, not a published Shazam service quota.
+    private static let shazamRecognitionConcurrency = 3
+    private var activeRecognitions: [UUID: (fileName: String, phase: String)] = [:]
     private var loaded = false
     private var canPersist = false
     private var pendingLocalImports: [URL] = []
@@ -217,7 +221,7 @@ final class AppModel: ObservableObject {
     /// Prepare the complete selection before changing the draft, so cancellation is atomic per file.
     private func applyCandidate(_ candidate: MetadataCandidate, to document: AudioDocument,
                                 releaseChoice: CandidateReleaseChoice? = nil) async throws -> String? {
-        operation = L10n.text("Loading match", "正在读取匹配结果")
+        setRecognitionPhase(L10n.text("Loading match", "正在读取匹配结果"), for: document.id)
         try Task.checkCancellation()
         let resolved = candidate
         let hasCatalog = resolved.source == .shazamKit && resolved.appleMusicMetadata != nil
@@ -244,7 +248,7 @@ final class AppModel: ObservableObject {
         if hasCatalog && choice == nil { artwork = document.draftArtwork }
         var coverNotice: String?
         if resolved.source == .shazamKit && (!hasCatalog || choice == .appleMusic) {
-            operation = L10n.text("Downloading cover", "正在下载封面")
+            setRecognitionPhase(L10n.text("Downloading cover", "正在下载封面"), for: document.id)
             do {
                 let downloaded: AudioArtwork?
                 if let url = resolved.artworkURL {
@@ -414,53 +418,44 @@ final class AppModel: ObservableObject {
             var pending = 0
             var unmatched = 0
             var detailWarnings = 0
-            for item in items {
-                if Task.isCancelled { break }
-                currentFile = item.fileName
-                operation = L10n.text("Identifying", "正在识别")
-                candidates.removeValue(forKey: item.id)
-                appliedCandidateIDs.removeValue(forKey: item.id)
-                appliedReleaseChoices.removeValue(forKey: item.id)
-                do {
-                    let url = try accessibleURL(for: item)
-                    let scoped = url.startAccessingSecurityScopedResource()
-                    defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-                    let matches = try await recognition.identify(url: url, apiKey: key, provider: provider)
-                    try Task.checkCancellation()
-                    candidates[item.id] = matches
-                    if automaticallyApply {
-                        switch MusicRecognitionService.automaticMatch(from: matches) {
-                        case .selected(let candidate):
-                            let warning = try await applyCandidate(candidate, to: item)
-                            applied += 1
-                            if candidate.hasAlbumConflict(with: item.original.album) { pending += 1 }
-                            if warning != nil { detailWarnings += 1 }
-                        case .belowThreshold:
-                            pending += 1
-                            setError(L10n.text("Best similarity is below 90%. Choose a match manually; your draft was kept.",
-                                               "最高相似度低于 90%，请手动选择匹配；已有草稿保持不变。"), for: item.id)
-                        case .ambiguous:
-                            pending += 1
-                            setError(provider == .shazamKit
-                                ? L10n.text("Shazam returned several matches. Choose one manually; your draft was kept.",
-                                            "Shazam 返回了多个匹配，请手动选择；已有草稿保持不变。")
-                                : L10n.text("Several matches share the highest similarity. Choose a song manually; your draft was kept.",
-                                            "存在多个最高相似度匹配，请手动选择；已有草稿保持不变。"), for: item.id)
-                        case .noMatch:
-                            unmatched += 1
-                            setError(L10n.text("No match found. Try another recognition provider or edit manually.",
-                                               "未找到匹配，可切换识别服务或手动编辑。"), for: item.id)
-                        }
-                    } else {
-                        setError(matches.isEmpty ? L10n.text("No match found. Try another recognition provider or edit manually.", "未找到匹配，可切换识别服务或手动编辑。") : nil, for: item.id)
-                    }
-                } catch is CancellationError { break }
-                catch {
-                    setError(error.localizedDescription, for: item.id)
-                    failures.append(item.fileName + ": " + error.localizedDescription)
+            var stopped = false
+            let concurrency = provider == .shazamKit ? Self.shazamRecognitionConcurrency : 1
+            await withTaskGroup(of: RecognitionOutcome.self) { group in
+                var nextIndex = 0
+                for item in items.prefix(concurrency) {
+                    guard group.addTaskUnlessCancelled(operation: {
+                        await self.identifyItem(item, key: key, provider: provider, automaticallyApply: automaticallyApply)
+                    }) else { break }
+                    nextIndex += 1
                 }
-                completedCount += 1
-                await persistNow()
+                while let outcome = await group.next() {
+                    switch outcome {
+                    case .applied(let needsSelection, let hasWarning):
+                        applied += 1
+                        if needsSelection { pending += 1 }
+                        if hasWarning { detailWarnings += 1 }
+                    case .pending: pending += 1
+                    case .unmatched: unmatched += 1
+                    case .identified: break
+                    case .failed(let message): failures.append(message)
+                    case .cancelled:
+                        stopped = true
+                        group.cancelAll()
+                        continue
+                    }
+                    completedCount += 1
+                    // Serialize snapshots as files finish, regardless of their input order.
+                    await persistNow()
+                    if Task.isCancelled || stopped {
+                        stopped = true
+                        group.cancelAll()
+                    } else if nextIndex < items.count {
+                        let item = items[nextIndex]
+                        if group.addTaskUnlessCancelled(operation: {
+                            await self.identifyItem(item, key: key, provider: provider, automaticallyApply: automaticallyApply)
+                        }) { nextIndex += 1 }
+                    }
+                }
             }
             // begin() cancels pending debounced edits; persist even if the first file was cancelled.
             await persistNow()
@@ -474,7 +469,7 @@ final class AppModel: ObservableObject {
                 if detailWarnings > 0 {
                     lines.append(L10n.text("Metadata or cover notices: \(detailWarnings)", "补全或封面提示：\(detailWarnings)"))
                 }
-                if Task.isCancelled {
+                if Task.isCancelled || stopped {
                     lines.append(L10n.text("Stopped. Unprocessed: \(items.count - completedCount)",
                                            "已停止，尚未处理：\(items.count - completedCount)"))
                 }
@@ -485,6 +480,85 @@ final class AppModel: ObservableObject {
             } else if !failures.isEmpty {
                 notice = failures.prefix(5).joined(separator: "\n")
             }
+        }
+    }
+
+    private enum RecognitionOutcome: Sendable {
+        case applied(needsSelection: Bool, hasWarning: Bool)
+        case pending, unmatched, identified, cancelled
+        case failed(String)
+    }
+
+    /// Each worker owns one file; UI and draft mutations stay isolated to MainActor.
+    private func identifyItem(_ item: AudioDocument, key: String, provider: RecognitionProvider,
+                              automaticallyApply: Bool) async -> RecognitionOutcome {
+        guard !Task.isCancelled else { return .cancelled }
+        activeRecognitions[item.id] = (item.fileName, L10n.text("Identifying", "正在识别"))
+        updateRecognitionProgress()
+        defer {
+            activeRecognitions.removeValue(forKey: item.id)
+            updateRecognitionProgress()
+        }
+        candidates.removeValue(forKey: item.id)
+        appliedCandidateIDs.removeValue(forKey: item.id)
+        appliedReleaseChoices.removeValue(forKey: item.id)
+        do {
+            let url = try accessibleURL(for: item)
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            let matches = try await recognition.identify(url: url, apiKey: key, provider: provider)
+            try Task.checkCancellation()
+            candidates[item.id] = matches
+            guard automaticallyApply else {
+                setError(matches.isEmpty ? L10n.text("No match found. Try another recognition provider or edit manually.",
+                                                    "未找到匹配，可切换识别服务或手动编辑。") : nil, for: item.id)
+                return .identified
+            }
+            switch MusicRecognitionService.automaticMatch(from: matches) {
+            case .selected(let candidate):
+                let warning = try await applyCandidate(candidate, to: item)
+                return .applied(needsSelection: candidate.hasAlbumConflict(with: item.original.album),
+                                hasWarning: warning != nil)
+            case .belowThreshold:
+                setError(L10n.text("Best similarity is below 90%. Choose a match manually; your draft was kept.",
+                                   "最高相似度低于 90%，请手动选择匹配；已有草稿保持不变。"), for: item.id)
+                return .pending
+            case .ambiguous:
+                setError(provider == .shazamKit
+                    ? L10n.text("Shazam returned several matches. Choose one manually; your draft was kept.",
+                                "Shazam 返回了多个匹配，请手动选择；已有草稿保持不变。")
+                    : L10n.text("Several matches share the highest similarity. Choose a song manually; your draft was kept.",
+                                "存在多个最高相似度匹配，请手动选择；已有草稿保持不变。"), for: item.id)
+                return .pending
+            case .noMatch:
+                setError(L10n.text("No match found. Try another recognition provider or edit manually.",
+                                   "未找到匹配，可切换识别服务或手动编辑。"), for: item.id)
+                return .unmatched
+            }
+        } catch is CancellationError { return .cancelled }
+        catch {
+            guard !Task.isCancelled else { return .cancelled }
+            setError(error.localizedDescription, for: item.id)
+            return .failed(item.fileName + ": " + error.localizedDescription)
+        }
+    }
+
+    private func setRecognitionPhase(_ phase: String, for id: UUID) {
+        if activeRecognitions[id] != nil {
+            activeRecognitions[id]?.phase = phase
+            updateRecognitionProgress()
+        } else {
+            operation = phase
+        }
+    }
+
+    private func updateRecognitionProgress() {
+        currentFile = activeRecognitions.values.map(\.fileName).sorted().joined(separator: " · ")
+        if activeRecognitions.count > 1 {
+            operation = L10n.text("Identifying · \(activeRecognitions.count) files",
+                                  "正在识别 · \(activeRecognitions.count) 个文件")
+        } else if let active = activeRecognitions.values.first {
+            operation = active.phase
         }
     }
 
