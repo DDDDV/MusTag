@@ -16,6 +16,161 @@ final class LibraryFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testNewLibraryBecomesReadyOnlyAfterInitialLoad() async {
+        let store = AudioFileStore(codec: NativeMetadataCodec(), storageDirectory: root.appendingPathComponent("State"))
+        let model = AppModel(fileStore: store)
+
+        XCTAssertEqual(model.libraryLoadState, .loading,
+                       "An unread library must not be presented as an empty library")
+        await model.load()
+
+        XCTAssertEqual(model.libraryLoadState, .ready)
+        XCTAssertTrue(model.documents.isEmpty)
+        XCTAssertTrue(model.folders.isEmpty)
+        XCTAssertNil(model.notice)
+    }
+
+    @MainActor
+    func testColdStartPublishesReadyAfterRestoringFilesFoldersAndDrafts() async throws {
+        let album = try directory("Saved Album")
+        _ = try audio("Saved Song", in: album)
+        let empty = try directory("Saved Empty Folder")
+        let state = root.appendingPathComponent("State")
+        let store = AudioFileStore(codec: NativeMetadataCodec(), storageDirectory: state)
+        let imported = try await store.importFiles(from: [album, empty])
+        var document = try XCTUnwrap(imported.documents.first)
+        document.draft.title = "My unsaved title"
+        try await store.persistLibrary(AudioLibrary(documents: [document], folders: imported.folders))
+        let originalIndex = try Data(contentsOf: state.appendingPathComponent("documents.json"))
+        let model = AppModel(fileStore: store)
+        var readyPublications = 0
+        let observation = model.$libraryLoadState.sink { loadState in
+            guard loadState == .ready else { return }
+            readyPublications += 1
+            XCTAssertEqual(model.documents.map(\.id), [document.id])
+            XCTAssertEqual(model.documents.first?.draft, document.draft)
+            XCTAssertEqual(model.folders, imported.folders,
+                           "All folder records must be restored before revealing the home page")
+        }
+        defer { observation.cancel() }
+
+        XCTAssertEqual(model.libraryLoadState, .loading)
+        await model.persistNow()
+        XCTAssertEqual(try Data(contentsOf: state.appendingPathComponent("documents.json")), originalIndex)
+        await model.load()
+
+        XCTAssertEqual(model.libraryLoadState, .ready)
+        XCTAssertEqual(readyPublications, 1)
+        XCTAssertEqual(model.documents.first?.draft.title, "My unsaved title")
+        let emptyFolder = try XCTUnwrap(model.folders.first { $0.name == "Saved Empty Folder" })
+        XCTAssertTrue(model.documents(in: emptyFolder).isEmpty)
+        await model.load()
+        XCTAssertEqual(readyPublications, 1, "Repeated view tasks must not reload an already restored library")
+    }
+
+    @MainActor
+    func testFailedStartupPreservesUnreadIndexAndCanRetry() async throws {
+        let song = try audio("Saved Song", in: root)
+        let state = root.appendingPathComponent("State")
+        let store = AudioFileStore(codec: NativeMetadataCodec(), storageDirectory: state)
+        let imported = try await store.importFiles(from: [song])
+        let document = try XCTUnwrap(imported.documents.first)
+        try await store.persistLibrary(AudioLibrary(documents: imported.documents, folders: imported.folders))
+        let index = state.appendingPathComponent("documents.json")
+        let validIndex = try Data(contentsOf: index)
+        let unreadableIndex = Data("{incomplete library".utf8)
+        try unreadableIndex.write(to: index, options: .atomic)
+        let model = AppModel(fileStore: store)
+
+        await model.load()
+
+        guard case .failed(let message) = model.libraryLoadState else {
+            return XCTFail("A failed read must show a retryable error instead of the empty welcome page")
+        }
+        XCTAssertFalse(message.isEmpty)
+        await model.persistNow()
+        XCTAssertEqual(try Data(contentsOf: index), unreadableIndex,
+                       "Scene persistence after a failed startup must not replace unread user data")
+
+        try validIndex.write(to: index, options: .atomic)
+        await model.load()
+
+        XCTAssertEqual(model.libraryLoadState, .ready)
+        XCTAssertEqual(model.documents.map(\.id), [document.id])
+        XCTAssertNil(model.notice)
+    }
+
+    @MainActor
+    func testQueuedLocalImportsWaitForSuccessfulStartupRetryAndKeepRestoredDraft() async throws {
+        let song = try audio("Saved Song", in: root)
+        let state = root.appendingPathComponent("State")
+        let store = AudioFileStore(codec: NativeMetadataCodec(), storageDirectory: state)
+        let imported = try await store.importFiles(from: [song])
+        var document = try XCTUnwrap(imported.documents.first)
+        document.draft.title = "Keep my pending edit"
+        try await store.persistLibrary(AudioLibrary(documents: [document], folders: []))
+        let index = state.appendingPathComponent("documents.json")
+        let validIndex = try Data(contentsOf: index)
+        let unreadableIndex = Data("{incomplete library".utf8)
+        try unreadableIndex.write(to: index, options: .atomic)
+        let downloaded = try audio("Downloaded Song", in: store.libraryDirectory)
+        let model = AppModel(fileStore: store)
+
+        model.enqueueLocalImports([downloaded])
+        XCTAssertFalse(model.isWorking, "A local download must wait for the existing library to be restored")
+        XCTAssertTrue(model.documents.isEmpty)
+        await model.load()
+
+        guard case .failed = model.libraryLoadState else {
+            return XCTFail("The unreadable library should keep the pending import queued")
+        }
+        XCTAssertFalse(model.isWorking)
+        XCTAssertTrue(model.documents.isEmpty)
+        XCTAssertEqual(try Data(contentsOf: index), unreadableIndex)
+
+        try validIndex.write(to: index, options: .atomic)
+        await model.load()
+        try await waitUntilIdle(model)
+
+        XCTAssertEqual(model.libraryLoadState, .ready)
+        XCTAssertNil(model.notice)
+        XCTAssertEqual(Set(model.documents.map(\.fileName)), [song.lastPathComponent, downloaded.lastPathComponent])
+        XCTAssertEqual(model.document(document.id)?.draft, document.draft)
+        let restored = try await store.loadLibrary()
+        XCTAssertEqual(Set(restored.documents.map(\.id)), Set(model.documents.map(\.id)))
+        XCTAssertEqual(restored.documents.first { $0.id == document.id }?.draft, document.draft)
+    }
+
+    @MainActor
+    func testUnreadableBackupsDoNotPreventLibraryStartupOrDraftPersistence() async throws {
+        let song = try audio("Saved Song", in: root)
+        let state = root.appendingPathComponent("State")
+        let store = AudioFileStore(codec: NativeMetadataCodec(), storageDirectory: state)
+        let imported = try await store.importFiles(from: [song])
+        let document = try XCTUnwrap(imported.documents.first)
+        try await store.persistLibrary(AudioLibrary(documents: imported.documents, folders: imported.folders))
+        let journal = state.appendingPathComponent("backups.json")
+        let unreadableJournal = Data("{incomplete backup journal".utf8)
+        try unreadableJournal.write(to: journal, options: .atomic)
+        let model = AppModel(fileStore: store)
+
+        await model.load()
+
+        XCTAssertEqual(model.libraryLoadState, .ready)
+        XCTAssertEqual(model.documents.map(\.id), [document.id])
+        XCTAssertNotNil(model.notice)
+        var draft = document.draft
+        draft.title = "Keep this edit despite the backup warning"
+        model.updateDraft(draft, for: document.id)
+        await flushScheduledPersistence(model)
+
+        let restored = try await store.loadLibrary()
+        XCTAssertEqual(restored.documents.first?.draft, draft)
+        XCTAssertEqual(try Data(contentsOf: journal), unreadableJournal,
+                       "A failed backup read must leave the backup index available for recovery")
+    }
+
+    @MainActor
     func test600DownloadedFilesPublishOnceAndKeepMainActorResponsiveOnImportAndRefresh() async throws {
         let state = root.appendingPathComponent("State")
         let store = AudioFileStore(codec: NativeMetadataCodec(), storageDirectory: state)

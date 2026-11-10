@@ -10,6 +10,63 @@ final class MusTagUITests: XCTestCase {
         app.launch()
     }
 
+    func testColdLaunchRestoresPersistedLibraryWithoutShowingWelcome() {
+        app.launchEnvironment["MUSTAG_UI_TEST_LIBRARY_ID"] = UUID().uuidString
+        launchWithFolders()
+        let musicFolder = app.buttons["folderRow_Music Folder"]
+        XCTAssertTrue(musicFolder.waitForExistence(timeout: 15))
+        XCTAssertTrue(app.buttons["folderRow_Empty Folder"].exists)
+        XCTAssertTrue(app.buttons["audioRow_UI Test.m4a"].exists)
+
+        // Reuse the isolated on-disk library in a new process, without reseeding it.
+        app.terminate()
+        app.launchArguments.removeAll { $0 == "--ui-testing-with-folders" }
+        app.launchArguments.append("--ui-testing-delay-library-load")
+        app.launch()
+
+        let loading = app.descendants(matching: .any).matching(identifier: "libraryLoadingState").firstMatch
+        let welcome = app.descendants(matching: .any).matching(identifier: "welcomeScreen").firstMatch
+        XCTAssertTrue(loading.waitForExistence(timeout: 3))
+        XCTAssertFalse(welcome.exists, "An unread library must not be presented as an empty library")
+        XCTAssertFalse(app.buttons["addAudioButton"].exists)
+        XCTAssertFalse(app.tabBars.firstMatch.exists, "Import entry points must wait for library restoration")
+        capture("cold-launch-restoring-library")
+
+        XCTAssertTrue(musicFolder.waitForExistence(timeout: 15))
+        XCTAssertFalse(loading.exists)
+        XCTAssertFalse(welcome.exists)
+        XCTAssertTrue(app.buttons["folderRow_Other Folder"].exists)
+        XCTAssertTrue(app.buttons["folderRow_Empty Folder"].exists)
+        XCTAssertTrue(app.buttons["audioRow_UI Test.m4a"].exists)
+        XCTAssertTrue(app.tabBars.buttons["Home"].isSelected)
+        capture("cold-launch-restored-library")
+
+        musicFolder.tap()
+        XCTAssertTrue(app.buttons["audioRow_Nested Track.m4a"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["audioRow_Folder Track.m4a"].exists)
+    }
+
+    func testColdLaunchShowsWelcomeOnlyAfterConfirmingLibraryIsEmpty() {
+        app.terminate()
+        app.launchEnvironment["MUSTAG_UI_TEST_LIBRARY_ID"] = UUID().uuidString
+        app.launchArguments.append("--ui-testing-delay-library-load")
+        app.launch()
+
+        let loading = app.descendants(matching: .any).matching(identifier: "libraryLoadingState").firstMatch
+        let welcome = app.descendants(matching: .any).matching(identifier: "welcomeScreen").firstMatch
+        XCTAssertTrue(loading.waitForExistence(timeout: 3))
+        XCTAssertFalse(welcome.exists)
+        XCTAssertFalse(app.buttons["addAudioButton"].exists)
+        XCTAssertFalse(app.tabBars.firstMatch.exists)
+        capture("cold-launch-checking-empty-library")
+
+        XCTAssertTrue(welcome.waitForExistence(timeout: 15))
+        XCTAssertFalse(loading.exists)
+        XCTAssertTrue(app.buttons["addAudioButton"].exists)
+        XCTAssertTrue(app.tabBars.buttons["Home"].isSelected)
+        capture("cold-launch-confirmed-empty-library")
+    }
+
     func testEmptyLibraryOffersFilesAndFolderImport() {
         let welcome = app.descendants(matching: .any).matching(identifier: "welcomeScreen").firstMatch
         XCTAssertTrue(welcome.waitForExistence(timeout: 8))

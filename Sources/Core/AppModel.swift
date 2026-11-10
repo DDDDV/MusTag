@@ -8,8 +8,16 @@ enum AppTab: Hashable {
     case home, connections, settings
 }
 
+enum LibraryLoadState: Equatable {
+    case loading
+    case ready
+    case failed(String)
+}
+
 @MainActor
 final class AppModel: ObservableObject {
+    // An unread library must never be presented as an empty library.
+    @Published private(set) var libraryLoadState: LibraryLoadState = .loading
     @Published var documents: [AudioDocument] = []
     @Published var folders: [AudioFolder] = []
     @Published var candidates: [UUID: [MetadataCandidate]] = [:]
@@ -42,7 +50,7 @@ final class AppModel: ObservableObject {
     // This is an app resource limit, not a published Shazam service quota.
     private static let shazamRecognitionConcurrency = 3
     private var activeRecognitions: [UUID: (fileName: String, phase: String)] = [:]
-    private var loaded = false
+    private var isLoadingLibrary = false
     private var canPersist = false
     private var pendingLocalImports: [URL] = []
     private let uiTestDirectory: URL?
@@ -98,7 +106,10 @@ final class AppModel: ObservableObject {
             self.fileStore = fileStore
             uiTestDirectory = nil
         } else if Self.isUITesting {
-            let directory = FileManager.default.temporaryDirectory.appendingPathComponent("MusTagUITests-\(UUID().uuidString)", isDirectory: true)
+            // A test may reuse its isolated library across process launches.
+            let libraryID = ProcessInfo.processInfo.environment["MUSTAG_UI_TEST_LIBRARY_ID"]
+                .flatMap(UUID.init(uuidString:)) ?? UUID()
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent("MusTagUITests-\(libraryID.uuidString)", isDirectory: true)
             self.fileStore = AudioFileStore(codec: NativeMetadataCodec(), storageDirectory: directory)
             uiTestDirectory = directory
             apiKey = ""
@@ -143,13 +154,23 @@ final class AppModel: ObservableObject {
     }
 
     func load() async {
-        guard !loaded else { return }
-        loaded = true
+        guard libraryLoadState != .ready, !isLoadingLibrary else { return }
+        isLoadingLibrary = true
+        libraryLoadState = .loading
+        defer { isLoadingLibrary = false }
         do {
+            #if DEBUG
+            if Self.isUITesting, uiTestDirectory != nil,
+               ProcessInfo.processInfo.arguments.contains("--ui-testing-delay-library-load") {
+                try await Task.sleep(for: .seconds(8))
+            }
+            #endif
             let library = try await fileStore.loadLibrary()
             documents = library.documents
             folders = library.folders
-            backupRecords = try await fileStore.backups()
+            // A backup-index error must not disable an otherwise readable library.
+            do { backupRecords = try await fileStore.backups() }
+            catch { notice = error.localizedDescription }
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("--ui-testing-with-folders"),
                let directory = uiTestDirectory {
@@ -194,8 +215,11 @@ final class AppModel: ObservableObject {
             #endif
             canPersist = true
             if uiTestDirectory != nil { await persistNow() }
+            libraryLoadState = .ready
             drainLocalImports()
-        } catch { notice = error.localizedDescription }
+        } catch {
+            libraryLoadState = .failed(error.localizedDescription)
+        }
     }
 
     func document(_ id: UUID) -> AudioDocument? {
