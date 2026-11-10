@@ -163,6 +163,47 @@ final class MusTagUITests: XCTestCase {
         XCTAssertTrue(emptyFolder.waitForExistence(timeout: 3))
     }
 
+    func testBulkImportedLibraryRemainsInteractiveWith600Files() {
+        app.terminate()
+        app.launchArguments.append("--ui-testing-with-bulk-audio")
+        app.launch()
+        let folder = app.buttons["folderRow_Bulk Downloads"]
+        XCTAssertTrue(folder.waitForExistence(timeout: 30))
+        folder.tap()
+        XCTAssertTrue(app.navigationBars["Bulk Downloads"].waitForExistence(timeout: 5))
+
+        let select = app.buttons["librarySelectButton"]
+        XCTAssertTrue(select.waitForExistence(timeout: 5))
+        select.tap()
+        let selectedCount = app.staticTexts["selectedCountLabel"]
+        XCTAssertEqual(selectedCount.label, "0 selected")
+        let selectAll = app.buttons["selectAllButton"]
+        selectAll.tap()
+        XCTAssertEqual(selectedCount.label, "600 selected")
+        XCTAssertEqual(selectAll.label, "Deselect all")
+        selectAll.tap()
+        XCTAssertEqual(selectedCount.label, "0 selected")
+        select.tap()
+
+        let list = app.collectionViews.firstMatch
+        let firstRowID = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "audioRow_")).firstMatch.identifier
+        XCTAssertFalse(firstRowID.isEmpty)
+        let firstRow = app.buttons[firstRowID]
+        XCTAssertTrue(firstRow.isHittable)
+        list.swipeUp()
+        list.swipeUp()
+        XCTAssertFalse(firstRow.isHittable, "The large folder must respond to scrolling")
+
+        app.tabBars.buttons["Connections"].tap()
+        XCTAssertTrue(app.navigationBars["Connections"].waitForExistence(timeout: 3))
+        app.tabBars.buttons["Home"].tap()
+        XCTAssertTrue(app.navigationBars["Bulk Downloads"].waitForExistence(timeout: 3))
+        select.tap()
+        XCTAssertEqual(selectedCount.label, "0 selected")
+        select.tap()
+        XCTAssertEqual(select.label, "Select")
+    }
+
     func testFolderSelectionAndReviewStayWithinTheFolder() {
         launchWithFolders()
         editTrack("UI Test.m4a", prefix: "Standalone ")

@@ -47,13 +47,62 @@ actor AudioFileStore {
         var folders: [String: String] = [:]
     }
 
+    /// Decode the library once per batch, and normalize each persisted identity once.
+    /// The lowest matching position preserves the former `first(where:)` behavior
+    /// when an old library contains overlapping source and local identities.
+    private struct ImportLibraryIndex {
+        private enum Key: Hashable {
+            case relativePath(String), localURL(URL), sourceURL(URL), legacyURL(URL)
+        }
+
+        private let library: AudioLibrary
+        private var documents: [Key: Int] = [:]
+        private var folders: [Key: Int] = [:]
+
+        init(_ library: AudioLibrary) {
+            self.library = library
+            for (index, document) in library.documents.enumerated() {
+                let url = document.url.standardizedFileURL
+                var keys: [Key] = [.localURL(url)]
+                if let path = document.libraryRelativePath { keys.append(.relativePath(path)) }
+                else { keys.append(.legacyURL(url)) }
+                if let source = document.sourceURL { keys.append(.sourceURL(source.standardizedFileURL)) }
+                for key in keys where documents[key] == nil { documents[key] = index }
+            }
+            for (index, folder) in library.folders.enumerated() {
+                var keys: [Key] = [.localURL(folder.url.standardizedFileURL)]
+                if let path = folder.libraryRelativePath { keys.append(.relativePath(path)) }
+                if let source = folder.sourceURL { keys.append(.sourceURL(source.standardizedFileURL)) }
+                for key in keys where folders[key] == nil { folders[key] = index }
+            }
+        }
+
+        func document(relativePath: String, local: URL, source: URL) -> AudioDocument? {
+            let source = source.standardizedFileURL
+            let keys: [Key] = [.relativePath(relativePath), .localURL(local.standardizedFileURL),
+                               .sourceURL(source), .legacyURL(source)]
+            guard let index = keys.compactMap({ documents[$0] }).min() else { return nil }
+            return library.documents[index]
+        }
+
+        func folder(relativePath: String, local: URL, source: URL) -> AudioFolder? {
+            let source = source.standardizedFileURL
+            let keys: [Key] = [.relativePath(relativePath), .localURL(local.standardizedFileURL),
+                               .sourceURL(source), .localURL(source)]
+            guard let index = keys.compactMap({ folders[$0] }).min() else { return nil }
+            return library.folders[index]
+        }
+    }
+
     func importFiles(from urls: [URL]) throws -> ImportResult {
         try prepareStorage()
         var documents: [AudioDocument] = []
         var failures: [String] = []
         var folders: [AudioFolder] = []
         var seen: [String: Int] = [:]
-        var locations = try readImportLocations()
+        let library = try readLibrary()
+        let libraryIndex = ImportLibraryIndex(library)
+        var locations = try readImportLocations(library: library)
 
         // Plan containing folders first so mixed file/folder selections keep their tree.
         let roots = urls.enumerated().map { index, url in
@@ -94,7 +143,7 @@ actor AudioFileStore {
                             throw message("This folder could not be read. Reconnect the drive and select it again.",
                                           "无法读取此文件夹。请重新连接存储位置并再次选择。")
                         }
-                        let folder = try localFolder(for: root, locations: &locations)
+                        let folder = try localFolder(for: root, locations: &locations, libraryIndex: libraryIndex)
                         if !folders.contains(where: { $0.id == folder.id }) { folders.append(folder) }
 
                         for case let file as URL in enumerator {
@@ -103,12 +152,12 @@ actor AudioFileStore {
                                 let values = try file.resourceValues(forKeys: [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey])
                                 if values.isSymbolicLink == true { enumerator.skipDescendants(); continue }
                                 if values.isDirectory == true {
-                                    _ = try localFolder(for: file, locations: &locations)
+                                    _ = try localFolder(for: file, locations: &locations, libraryIndex: libraryIndex)
                                     continue
                                 }
                                 guard values.isRegularFile == true,
                                       Self.supportedExtensions.contains(file.pathExtension.lowercased()) else { continue }
-                                try importOne(file, folderID: folder.id, locations: &locations,
+                                try importOne(file, folderID: folder.id, locations: &locations, libraryIndex: libraryIndex,
                                               seen: &seen, documents: &documents)
                             } catch is CancellationError {
                                 throw CancellationError()
@@ -120,7 +169,7 @@ actor AudioFileStore {
                         guard Self.supportedExtensions.contains(root.pathExtension.lowercased()) else {
                             throw message("Choose an MP3, FLAC, or M4A audio file.", "请选择 MP3、FLAC 或 M4A 音频文件。")
                         }
-                        try importOne(root, locations: &locations, seen: &seen, documents: &documents)
+                        try importOne(root, locations: &locations, libraryIndex: libraryIndex, seen: &seen, documents: &documents)
                     }
                 } catch is CancellationError {
                     throw CancellationError()
@@ -375,7 +424,8 @@ actor AudioFileStore {
     func loadLibrary() throws -> AudioLibrary {
         try prepareStorage()
         var library = try readLibrary()
-        var locations = try readImportLocations()
+        let libraryIndex = ImportLibraryIndex(library)
+        var locations = try readImportLocations(library: library)
         for index in library.folders.indices {
             let old = library.folders[index]
             do {
@@ -384,7 +434,7 @@ actor AudioFileStore {
                     folder = old
                     folder.url = try libraryURL(relativePath: relativePath)
                 } else {
-                    folder = try localFolder(for: old.url, locations: &locations)
+                    folder = try localFolder(for: old.url, locations: &locations, libraryIndex: libraryIndex)
                 }
                 folder.persistentID = old.id
                 folder.sourceURL = old.sourceURL ?? folder.sourceURL
@@ -407,7 +457,7 @@ actor AudioFileStore {
                     defer { if accessing { external.stopAccessingSecurityScopedResource() } }
                     var migrated: [AudioDocument] = []
                     var seen: [String: Int] = [:]
-                    try importOne(external, locations: &locations, seen: &seen, documents: &migrated)
+                    try importOne(external, locations: &locations, libraryIndex: libraryIndex, seen: &seen, documents: &migrated)
                     guard var local = migrated.first else { throw localImportRequired() }
                     local.id = old.id
                     local.draft = old.draft
@@ -462,6 +512,7 @@ actor AudioFileStore {
     }
 
     private func importOne(_ source: URL, folderID: String? = nil, locations: inout ImportLocations,
+                           libraryIndex: ImportLibraryIndex,
                            seen: inout [String: Int], documents: inout [AudioDocument]) throws {
         guard source.isFileURL else { throw localImportRequired() }
         let identity = source.standardizedFileURL.absoluteString
@@ -521,12 +572,7 @@ actor AudioFileStore {
             locations.files[identity] = relativePath
             try writeJSON(locations, to: importsURL)
         }
-        let previous = try readLibrary().documents.first {
-            $0.libraryRelativePath == relativePath
-                || $0.url.standardizedFileURL == local.standardizedFileURL
-                || $0.sourceURL?.standardizedFileURL == source.standardizedFileURL
-                || ($0.libraryRelativePath == nil && $0.url.standardizedFileURL == source.standardizedFileURL)
-        }
+        let previous = libraryIndex.document(relativePath: relativePath, local: local, source: source)
         documents.append(AudioDocument(
             id: previous?.id ?? UUID(),
             url: local, bookmark: try refreshedBookmark(local, fallback: nil),
@@ -556,7 +602,8 @@ actor AudioFileStore {
         try root.setResourceValues(values)
     }
 
-    private func localFolder(for source: URL, locations: inout ImportLocations) throws -> AudioFolder {
+    private func localFolder(for source: URL, locations: inout ImportLocations,
+                             libraryIndex: ImportLibraryIndex) throws -> AudioFolder {
         guard source.isFileURL else { throw localImportRequired() }
         let identity = source.standardizedFileURL.absoluteString
         let local: URL
@@ -576,12 +623,7 @@ actor AudioFileStore {
             locations.folders[identity] = relativePath
             try writeJSON(locations, to: importsURL)
         }
-        let previous = try readLibrary().folders.first {
-            $0.libraryRelativePath == relativePath
-                || $0.url.standardizedFileURL == local.standardizedFileURL
-                || $0.sourceURL?.standardizedFileURL == source.standardizedFileURL
-                || $0.url.standardizedFileURL == source.standardizedFileURL
-        }
+        let previous = libraryIndex.folder(relativePath: relativePath, local: local, source: source)
         return AudioFolder(url: local,
                            sourceURL: isLibraryLocation(source) ? previous?.sourceURL : source.standardizedFileURL,
                            libraryRelativePath: relativePath, persistentID: previous?.id ?? identity)
@@ -607,10 +649,9 @@ actor AudioFileStore {
             .prefix(12).map { String(format: "%02x", $0) }.joined()
     }
 
-    private func readImportLocations() throws -> ImportLocations {
+    private func readImportLocations(library: AudioLibrary) throws -> ImportLocations {
         var locations = manager.fileExists(atPath: importsURL.path)
             ? try JSONDecoder().decode(ImportLocations.self, from: Data(contentsOf: importsURL)) : ImportLocations()
-        let library = try readLibrary()
         for document in library.documents {
             if let source = document.sourceURL, source.isFileURL, let path = document.libraryRelativePath {
                 locations.files[source.standardizedFileURL.absoluteString] = path

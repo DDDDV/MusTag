@@ -151,6 +151,94 @@ struct ImportResult: Sendable {
     var folders: [AudioFolder] = []
 }
 
+/// Builds one library update off the main actor, with each path normalized once.
+struct LibraryImportMerge: Sendable {
+    var library: AudioLibrary
+    var refreshedIDs: Set<UUID> = []
+    var refreshedDrafts = 0
+
+    init(_ result: ImportResult, into library: AudioLibrary) {
+        self.library = library
+        var folderIndices: [String: Int] = [:]
+        for (index, folder) in library.folders.enumerated() where folderIndices[folder.id] == nil {
+            folderIndices[folder.id] = index
+        }
+        for folder in result.folders {
+            if let index = folderIndices[folder.id] {
+                self.library.folders[index] = folder
+            } else {
+                folderIndices[folder.id] = self.library.folders.count
+                self.library.folders.append(folder)
+            }
+        }
+
+        var indices: [Key: Set<Int>] = [:]
+        var documentKeys: [[Key]] = []
+        for (index, document) in library.documents.enumerated() {
+            let keys = Self.keys(document)
+            documentKeys.append(keys)
+            for key in keys { indices[key, default: []].insert(index) }
+        }
+        for incoming in result.documents {
+            let incomingKeys = Self.keys(incoming)
+            // A source match is allowed only when the incoming file has provenance.
+            let matchingKeys = incoming.sourceURL == nil ? Array(incomingKeys.prefix(2)) : incomingKeys
+            let index = matchingKeys.compactMap { indices[$0]?.min() }.min()
+            guard let index else {
+                let index = self.library.documents.count
+                self.library.documents.append(incoming)
+                documentKeys.append(incomingKeys)
+                for key in incomingKeys { indices[key, default: []].insert(index) }
+                continue
+            }
+
+            let existing = self.library.documents[index]
+            var refreshed = incoming
+            refreshed.id = existing.id
+            refreshed.importFolderIDs = (existing.importFolderIDs ?? []).union(incoming.importFolderIDs ?? [])
+            if refreshed.sourceHash == existing.sourceHash {
+                refreshed.originalShazamAttribution = existing.originalShazamAttribution
+                refreshed.draftShazamAttribution = existing.draftShazamAttribution
+            }
+            if existing.hasChanges {
+                // Rebase only edited fields; retain unrelated changes from the file.
+                var draft = incoming.original
+                for field in TagField.allCases where field.value(in: existing.original) != field.value(in: existing.draft) {
+                    field.set(field.value(in: existing.draft), in: &draft)
+                }
+                refreshed.draft = draft
+                if existing.hasArtworkChanges { refreshed.draftArtwork = existing.draftArtwork }
+                refreshed.draftShazamAttribution = existing.draftShazamAttribution
+                refreshedDrafts += 1
+            }
+            self.library.documents[index] = refreshed
+            refreshedIDs.insert(existing.id)
+
+            // Remove stale aliases when a legacy file moves into the local library.
+            // Sets preserve the first-match behavior even for duplicate legacy paths.
+            for key in documentKeys[index] {
+                indices[key]?.remove(index)
+                if indices[key]?.isEmpty == true { indices.removeValue(forKey: key) }
+            }
+            var refreshedKeys = incomingKeys
+            refreshedKeys[0] = .id(existing.id)
+            documentKeys[index] = refreshedKeys
+            for key in refreshedKeys { indices[key, default: []].insert(index) }
+        }
+    }
+
+    private enum Key: Hashable {
+        case id(UUID)
+        case local(URL)
+        case source(URL)
+    }
+
+    private static func keys(_ document: AudioDocument) -> [Key] {
+        let local = document.url.standardizedFileURL
+        return [.id(document.id), .local(local), .source(document.sourceURL?.standardizedFileURL ?? local)]
+    }
+}
+
 protocol AudioMetadataCodec: Sendable {
     func read(from url: URL) throws -> AudioSnapshot
     func write(_ tags: AudioTags, to url: URL) throws

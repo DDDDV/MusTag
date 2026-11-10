@@ -34,7 +34,8 @@ private struct LibraryContentsView: View {
     private var scopeIDs: Set<UUID> { Set(scopeDocuments.map(\.id)) }
     private var targetIDs: Set<UUID> { selecting ? selected.intersection(scopeIDs) : scopeIDs }
     private var changedTargetIDs: [UUID] {
-        scopeDocuments.filter { targetIDs.contains($0.id) && $0.hasChanges }.map(\.id)
+        let targets = targetIDs
+        return scopeDocuments.filter { targets.contains($0.id) && $0.hasChanges }.map(\.id)
     }
     private var isEmpty: Bool {
         folder == nil ? model.documents.isEmpty && model.folders.isEmpty : scopeDocuments.isEmpty
@@ -290,44 +291,46 @@ private struct LibraryContentsView: View {
     }
 
     private var batchActions: some View {
-        VStack(spacing: 8) {
+        let targets = targetIDs
+        let changed = changedTargetIDs
+        return VStack(spacing: 8) {
             if selecting {
                 HStack {
-                    Text(L10n.text("\(targetIDs.count) selected", "已选 \(targetIDs.count) 个"))
+                    Text(L10n.text("\(targets.count) selected", "已选 \(targets.count) 个"))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .accessibilityIdentifier("selectedCountLabel")
                     Spacer()
-                    Button(role: .destructive) { removalIDs = targetIDs } label: {
+                    Button(role: .destructive) { removalIDs = targets } label: {
                         Label(L10n.text("Remove from list", "从列表移除"), systemImage: "trash")
                     }
                     .buttonStyle(.bordered)
-                    .disabled(targetIDs.isEmpty)
+                    .disabled(targets.isEmpty)
                     .accessibilityIdentifier("batchRemoveButton")
                 }
             }
             if !selecting {
                 Text(folder == nil
-                     ? L10n.text("Entire library · \(targetIDs.count) files", "全部资料库 · \(targetIDs.count) 个文件")
-                     : L10n.text("Current folder · \(targetIDs.count) files", "当前文件夹 · \(targetIDs.count) 个文件"))
+                     ? L10n.text("Entire library · \(targets.count) files", "全部资料库 · \(targets.count) 个文件")
+                     : L10n.text("Current folder · \(targets.count) files", "当前文件夹 · \(targets.count) 个文件"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             HStack(spacing: 12) {
-                Button { model.identify(targetIDs, automaticallyApply: true) } label: {
+                Button { model.identify(targets, automaticallyApply: true) } label: {
                     Label(L10n.text("Auto-match", "自动匹配"), systemImage: "waveform")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.bordered)
-                .disabled(targetIDs.isEmpty)
+                .disabled(targets.isEmpty)
                 .accessibilityIdentifier("identifyButton")
-                Button { review = ReviewRequest(ids: changedTargetIDs) } label: {
-                    Text(L10n.text("Review \(changedTargetIDs.count)", "预览修改 \(changedTargetIDs.count)"))
+                Button { review = ReviewRequest(ids: changed) } label: {
+                    Text(L10n.text("Review \(changed.count)", "预览修改 \(changed.count)"))
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(changedTargetIDs.isEmpty)
+                .disabled(changed.isEmpty)
                 .accessibilityIdentifier("reviewButton")
             }
             .controlSize(.large)

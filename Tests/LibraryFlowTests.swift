@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import XCTest
 @testable import MusTag
@@ -12,6 +13,146 @@ final class LibraryFlowTests: XCTestCase {
 
     override func tearDownWithError() throws {
         if let root { try? FileManager.default.removeItem(at: root) }
+    }
+
+    @MainActor
+    func test600DownloadedFilesPublishOnceAndKeepMainActorResponsiveOnImportAndRefresh() async throws {
+        let state = root.appendingPathComponent("State")
+        let store = AudioFileStore(codec: NativeMetadataCodec(), storageDirectory: state)
+        let downloaded = store.libraryDirectory.appendingPathComponent("Connections/Server", isDirectory: true)
+        try FileManager.default.createDirectory(at: downloaded, withIntermediateDirectories: true)
+        for index in 0..<600 { _ = try audio("Track-\(index)", in: downloaded) }
+        let model = AppModel(fileStore: store)
+        await model.load()
+        var publications = 0
+        let observation = model.$documents.dropFirst().sink { _ in publications += 1 }
+        defer { observation.cancel() }
+
+        var originalIDs: Set<UUID> = []
+        var editedID: UUID?
+        for pass in 0..<2 {
+            publications = 0
+            let start = ProcessInfo.processInfo.systemUptime
+            var lastTick = start
+            var longestGap = 0.0
+            var ticks = 0
+            // Same entry point used by the local-files-added download notification.
+            model.enqueueLocalImports([downloaded])
+            while model.isWorking, ProcessInfo.processInfo.systemUptime - start < 60 {
+                try await Task.sleep(for: .milliseconds(10))
+                let now = ProcessInfo.processInfo.systemUptime
+                longestGap = max(longestGap, now - lastTick)
+                lastTick = now
+                ticks += 1
+            }
+            print("600-file model import pass \(pass + 1): \(ProcessInfo.processInfo.systemUptime - start)s; maximum main-actor heartbeat gap \(longestGap * 1_000)ms; \(publications) document publications")
+            XCTAssertFalse(model.isWorking)
+            XCTAssertEqual(model.documents.count, 600)
+            XCTAssertEqual(publications, 1, "A batch must publish its library once, not once per file")
+            XCTAssertGreaterThan(ticks, 1)
+            XCTAssertLessThan(longestGap, 0.25, "Bulk import must keep the main actor available for interaction")
+            if pass == 0 {
+                XCTAssertNil(model.notice)
+                originalIDs = Set(model.documents.map(\.id))
+                let document = try XCTUnwrap(model.documents.first)
+                editedID = document.id
+                var draft = document.draft
+                draft.title = "Keep my draft through a 600-file refresh"
+                model.updateDraft(draft, for: document.id)
+            } else {
+                XCTAssertEqual(Set(model.documents.map(\.id)), originalIDs)
+                XCTAssertEqual(model.document(try XCTUnwrap(editedID))?.draft.title,
+                               "Keep my draft through a 600-file refresh")
+            }
+        }
+        let reloaded = await loadedModel()
+        XCTAssertEqual(Set(reloaded.documents.map(\.id)), originalIDs)
+        XCTAssertEqual(reloaded.document(try XCTUnwrap(editedID))?.draft.title,
+                       "Keep my draft through a 600-file refresh")
+    }
+
+    func testImportMergeUsesEarliestMatchAndReplacesStaleAliasesWithinBatch() {
+        func document(_ name: String, source: URL? = nil) -> AudioDocument {
+            AudioDocument(url: root.appendingPathComponent(name), bookmark: nil,
+                          original: .empty, draft: .empty, duration: 1, error: nil, sourceURL: source)
+        }
+        let source = root.appendingPathComponent("external.mp3")
+        let first = document("old.mp3", source: source)
+        let second = document("second.mp3")
+        var incoming = document("moved.mp3", source: source)
+        incoming.id = second.id
+        let reusedOldPath = document("old.mp3")
+        var latest = document("moved.mp3")
+        latest.original.title = "Newest metadata"
+        latest.draft = latest.original
+
+        let merged = LibraryImportMerge(ImportResult(documents: [incoming, reusedOldPath, latest], failures: []),
+                                        into: AudioLibrary(documents: [first, second], folders: []))
+
+        XCTAssertEqual(merged.library.documents.map(\.id), [first.id, second.id, reusedOldPath.id])
+        XCTAssertEqual(merged.library.documents[0].original.title, "Newest metadata")
+        XCTAssertEqual(merged.library.documents[0].url, latest.url)
+        XCTAssertEqual(merged.library.documents[1].url, second.url)
+        XCTAssertEqual(merged.refreshedIDs, [first.id])
+    }
+
+    func testImportMergeRetainsOtherDocumentsSharingAnOldAlias() {
+        let url = root.appendingPathComponent("shared.mp3")
+        let first = AudioDocument(url: url, bookmark: nil, original: .empty, draft: .empty, duration: 1, error: nil)
+        var second = first
+        second.id = UUID()
+        var moved = first
+        moved.url = root.appendingPathComponent("moved.mp3")
+        var refreshedSecond = second
+        refreshedSecond.id = UUID()
+        refreshedSecond.original.artist = "Refreshed second file"
+        refreshedSecond.draft = refreshedSecond.original
+
+        let merged = LibraryImportMerge(ImportResult(documents: [moved, refreshedSecond], failures: []),
+                                        into: AudioLibrary(documents: [first, second], folders: []))
+
+        XCTAssertEqual(merged.library.documents.map(\.id), [first.id, second.id])
+        XCTAssertEqual(merged.library.documents[1].original.artist, "Refreshed second file")
+        XCTAssertEqual(merged.refreshedIDs, [first.id, second.id])
+    }
+
+    func testImportMergeRebasesDraftAndRetainsCoverAttributionAndFolderMembership() {
+        let cover = AudioArtwork(data: Data([1, 2, 3]), mimeType: "image/jpeg")
+        let attribution = ShazamAttribution(title: "Recognized title", artist: "Recognized artist")
+        var existing = AudioDocument(url: root.appendingPathComponent("song.mp3"), bookmark: nil,
+                                     original: AudioTags(title: "Original", artist: "Original artist"),
+                                     draft: AudioTags(title: "My pending title", artist: "Original artist"),
+                                     duration: 1, error: nil, sourceHash: "same",
+                                     draftArtwork: cover, importFolderIDs: ["old-folder"],
+                                     originalShazamAttribution: attribution, draftShazamAttribution: attribution)
+        for hash in ["same", "changed"] {
+            var incoming = existing
+            incoming.id = UUID()
+            incoming.original.artist = "Updated file artist"
+            incoming.draft = incoming.original
+            incoming.sourceHash = hash
+            incoming.draftArtwork = nil
+            incoming.originalShazamAttribution = nil
+            incoming.draftShazamAttribution = nil
+            incoming.importFolderIDs = ["new-folder"]
+            let merged = LibraryImportMerge(ImportResult(documents: [incoming], failures: []),
+                                            into: AudioLibrary(documents: [existing], folders: []))
+            let refreshed = merged.library.documents[0]
+            XCTAssertEqual(refreshed.id, existing.id)
+            XCTAssertEqual(refreshed.draft.title, existing.draft.title)
+            XCTAssertEqual(refreshed.draft.artist, incoming.original.artist)
+            XCTAssertEqual(refreshed.draftArtwork, cover)
+            XCTAssertEqual(refreshed.importFolderIDs, ["old-folder", "new-folder"])
+            XCTAssertEqual(refreshed.draftShazamAttribution, attribution)
+            XCTAssertEqual(refreshed.originalShazamAttribution, hash == "same" ? attribution : nil)
+            XCTAssertEqual(merged.refreshedDrafts, 1)
+        }
+        // An unchanged file must not be reported as a retained pending draft.
+        existing.draft = existing.original
+        existing.draftArtwork = existing.originalArtwork
+        let merged = LibraryImportMerge(ImportResult(documents: [existing], failures: []),
+                                        into: AudioLibrary(documents: [existing], folders: []))
+        XCTAssertEqual(merged.refreshedDrafts, 0)
     }
 
     @MainActor

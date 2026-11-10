@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import XCTest
 @testable import MusTag
@@ -226,6 +227,52 @@ final class ConnectionDownloadTests: XCTestCase {
     }
 
     @MainActor
+    func testProgressBurstIsCoalescedAndFinalBytesArePublished() async throws {
+        let bytes = try Data(contentsOf: fixture())
+        let provider = ProgressBurstDownloadProvider(bytes: bytes, callbackCount: 50_000)
+        let downloads = ConnectionDownloads(repository: repository())
+        let file = RemoteFile(id: "burst", name: "Burst.mp3", isDirectory: false, size: Int64(bytes.count))
+        var updates = 0
+        let observation = downloads.$receivedBytes.dropFirst().sink { _ in updates += 1 }
+        defer { observation.cancel() }
+
+        downloads.start(connection: connection(), provider: provider, entries: [file], parentNames: [])
+        try await waitForCompletion(downloads)
+
+        XCTAssertTrue(downloads.failures.isEmpty)
+        XCTAssertEqual(downloads.completed, 1)
+        XCTAssertEqual(downloads.receivedBytes, Int64(bytes.count))
+        XCTAssertEqual(downloads.expectedBytes, Int64(bytes.count))
+        XCTAssertLessThan(updates, 100, "Packet callbacks must not flood the UI with progress publications")
+    }
+
+    @MainActor
+    func testLateProgressFromSameNamedFileCannotOverwriteActiveTransfer() async throws {
+        let bytes = try Data(contentsOf: fixture())
+        let started = expectation(description: "Second transfer started")
+        let provider = ProgressBurstDownloadProvider(bytes: bytes, heldFileID: "second", started: { started.fulfill() })
+        let downloads = ConnectionDownloads(repository: repository())
+        let files = ["first", "second"].map {
+            RemoteFile(id: $0, name: "Same.mp3", isDirectory: false, size: Int64(bytes.count))
+        }
+        downloads.start(connection: connection(), provider: provider, entries: files, parentNames: [])
+        await fulfillment(of: [started], timeout: 5)
+        try await Task.sleep(for: .milliseconds(250))
+
+        XCTAssertTrue(downloads.isRunning)
+        XCTAssertEqual(downloads.completed, 1)
+        XCTAssertEqual(downloads.receivedBytes, 100)
+        XCTAssertNil(downloads.expectedBytes)
+
+        await provider.release()
+        try await waitForCompletion(downloads)
+        XCTAssertTrue(downloads.failures.isEmpty)
+        XCTAssertEqual(downloads.completed, 2)
+        XCTAssertEqual(downloads.receivedBytes, Int64(bytes.count))
+        XCTAssertEqual(downloads.expectedBytes, Int64(bytes.count))
+    }
+
+    @MainActor
     func testCancellationRemovesPartialDownloadAndCreatesNoManifestEntry() async throws {
         let bytes = try Data(contentsOf: fixture())
         let started = expectation(description: "Partial download written")
@@ -239,6 +286,8 @@ final class ConnectionDownloadTests: XCTestCase {
         downloads.cancel()
         try await waitForCompletion(downloads)
         XCTAssertEqual(downloads.completed, 0)
+        XCTAssertEqual(downloads.receivedBytes, 100)
+        XCTAssertEqual(downloads.expectedBytes, Int64(bytes.count))
         XCTAssertNotNil(downloads.summary)
         let stages = await provider.destinations
         XCTAssertEqual(stages.count, 1)
@@ -281,6 +330,44 @@ final class ConnectionDownloadTests: XCTestCase {
         while downloads.isRunning && Date() < deadline { try await Task.sleep(nanoseconds: 10_000_000) }
         XCTAssertFalse(downloads.isRunning, "Downloads did not finish")
         if downloads.isRunning { downloads.cancel() }
+    }
+}
+
+private actor ProgressBurstDownloadProvider: RemoteFileProvider {
+    let bytes: Data
+    let callbackCount: Int
+    let heldFileID: String?
+    let started: @Sendable () -> Void
+    private var previousProgress: (@Sendable (Int64, Int64?) -> Void)?
+    private var released = false
+
+    init(bytes: Data, callbackCount: Int = 0, heldFileID: String? = nil,
+         started: @escaping @Sendable () -> Void = { }) {
+        self.bytes = bytes
+        self.callbackCount = callbackCount
+        self.heldFileID = heldFileID
+        self.started = started
+    }
+
+    func release() { released = true }
+    func listDirectory(path: String) async throws -> [RemoteFile] { [] }
+
+    func download(_ file: RemoteFile, to destination: URL,
+                  progress: @escaping @Sendable (Int64, Int64?) -> Void) async throws {
+        if file.id == heldFileID {
+            progress(100, nil)
+            // Deliberately deliver the previous file's callback after this one
+            // starts; display-name based filtering cannot distinguish them.
+            previousProgress?(Int64.max, Int64.max)
+            started()
+            while !released { try await Task.sleep(for: .milliseconds(10)) }
+        }
+        for index in 0..<callbackCount {
+            progress(Int64(index % bytes.count), Int64(bytes.count))
+        }
+        try bytes.write(to: destination)
+        progress(Int64(bytes.count), Int64(bytes.count))
+        previousProgress = progress
     }
 }
 

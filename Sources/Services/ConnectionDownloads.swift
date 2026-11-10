@@ -192,6 +192,7 @@ final class ConnectionDownloads: ObservableObject {
     @Published private(set) var failures: [String] = []
     @Published private(set) var summary: String?
     private var task: Task<Void, Never>?
+    private var currentTransferID: UUID?
     private let repository: LocalDownloadRepository
 
     init(repository: LocalDownloadRepository = LocalDownloadRepository()) { self.repository = repository }
@@ -245,12 +246,7 @@ final class ConnectionDownloads: ObservableObject {
                             downloaded.append(existing)
                         } else {
                             try await repository.checkSpace(for: file.size)
-                            try await provider.download(file, to: temporary) { [weak self] bytes, expected in
-                                Task { @MainActor in
-                                    guard self?.isRunning == true, self?.currentName == file.name else { return }
-                                    self?.receivedBytes = bytes; self?.expectedBytes = expected
-                                }
-                            }
+                            try await download(file, provider: provider, to: temporary)
                             try Task.checkCancellation()
                             let local = try await repository.accept(temporary, connection: connection, file: file,
                                                                     relativeComponents: relativePath)
@@ -275,6 +271,39 @@ final class ConnectionDownloads: ObservableObject {
         }
     }
 
+    private func download(_ file: RemoteFile, provider: any RemoteFileProvider, to destination: URL) async throws {
+        let transferID = UUID()
+        currentTransferID = transferID
+        let progress = DownloadProgressBuffer()
+        // A callback can arrive for every network packet. Keep one latest value
+        // instead of enqueuing a main-actor task (and publishing twice) per packet.
+        let refreshTask = Task { [weak self] in
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .milliseconds(100)) }
+                catch { return }
+                guard let self, self.currentTransferID == transferID else { return }
+                self.publishProgress(progress)
+            }
+        }
+        defer {
+            refreshTask.cancel()
+            if currentTransferID == transferID {
+                // Short transfers and failures must still show their latest bytes.
+                publishProgress(progress)
+                currentTransferID = nil
+            }
+        }
+        try await provider.download(file, to: destination) { bytes, expected in
+            progress.update(bytes: bytes, expected: expected)
+        }
+    }
+
+    private func publishProgress(_ progress: DownloadProgressBuffer) {
+        guard let latest = progress.takeLatest() else { return }
+        if receivedBytes != latest.bytes { receivedBytes = latest.bytes }
+        if expectedBytes != latest.expected { expectedBytes = latest.expected }
+    }
+
     private func collect(_ entries: [RemoteFile], names: [String], provider: any RemoteFileProvider,
                          visited: inout Set<String>, files: inout [(RemoteFile, [String])]) async throws {
         guard names.count < 128, visited.count < 100_000 else {
@@ -296,5 +325,31 @@ final class ConnectionDownloads: ObservableObject {
                 }
             } else if entry.isSupportedAudio { files.append((entry, names + [entry.name])) }
         }
+    }
+}
+
+/// Each transfer owns its buffer, so late callbacks cannot change another file's
+/// progress, even when the next file has the same display name.
+private final class DownloadProgressBuffer: @unchecked Sendable {
+    struct Value: Sendable {
+        let bytes: Int64
+        let expected: Int64?
+    }
+
+    private let lock = NSLock()
+    private var latest: Value?
+
+    func update(bytes: Int64, expected: Int64?) {
+        lock.lock()
+        defer { lock.unlock() }
+        latest = Value(bytes: bytes, expected: expected)
+    }
+
+    func takeLatest() -> Value? {
+        lock.lock()
+        defer { lock.unlock() }
+        let value = latest
+        latest = nil
+        return value
     }
 }

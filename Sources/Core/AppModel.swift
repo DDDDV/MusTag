@@ -170,6 +170,17 @@ final class AppModel: ObservableObject {
                 documents = result.documents
                 folders = result.folders
                 if !result.failures.isEmpty { throw MusTagError.message(result.failures.joined(separator: "\n")) }
+            } else if ProcessInfo.processInfo.arguments.contains("--ui-testing-with-bulk-audio"),
+                      let directory = uiTestDirectory {
+                let fixture = try Self.makeUITestAudio(in: directory)
+                let downloaded = fileStore.libraryDirectory.appendingPathComponent("Connections/Bulk Downloads", isDirectory: true)
+                try await Task.detached {
+                    try FileManager.default.createDirectory(at: downloaded, withIntermediateDirectories: true)
+                    for index in 0..<600 {
+                        try FileManager.default.copyItem(at: fixture, to: downloaded.appendingPathComponent("Track-\(index).m4a"))
+                    }
+                }.value
+                pendingLocalImports.append(downloaded)
             } else if ProcessInfo.processInfo.arguments.contains("--ui-testing-with-audio"),
                let directory = uiTestDirectory {
                 let fixture = try Self.makeUITestAudio(in: directory)
@@ -346,51 +357,24 @@ final class AppModel: ObservableObject {
             do {
                 let result = try await fileStore.importFiles(from: urls)
                 let failures = result.failures
-                for folder in result.folders {
-                    if let index = folders.firstIndex(where: { $0.id == folder.id }) {
-                        folders[index] = folder
-                    } else {
-                        folders.append(folder)
-                    }
-                }
-                var refreshedDrafts = 0
-                for incoming in result.documents {
-                    if let index = documents.firstIndex(where: { existing in
-                        existing.id == incoming.id || existing.url.standardizedFileURL == incoming.url.standardizedFileURL ||
-                        (incoming.sourceURL != nil && (existing.sourceURL ?? existing.url).standardizedFileURL == incoming.sourceURL?.standardizedFileURL)
-                    }) {
-                        let existing = documents[index]
-                        var refreshed = incoming
-                        refreshed.id = existing.id
-                        // Refreshing a file directly must keep its imported folder membership.
-                        refreshed.importFolderIDs = (existing.importFolderIDs ?? []).union(incoming.importFolderIDs ?? [])
-                        if refreshed.sourceHash == existing.sourceHash {
-                            refreshed.originalShazamAttribution = existing.originalShazamAttribution
-                            refreshed.draftShazamAttribution = existing.draftShazamAttribution
-                        }
-                        if existing.hasChanges {
-                            // Rebase only edited fields; preserve unrelated changes made by another app.
-                            var draft = incoming.original
-                            for field in TagField.allCases where field.value(in: existing.original) != field.value(in: existing.draft) {
-                                field.set(field.value(in: existing.draft), in: &draft)
-                            }
-                            refreshed.draft = draft
-                            if existing.hasArtworkChanges { refreshed.draftArtwork = existing.draftArtwork }
-                            refreshed.draftShazamAttribution = existing.draftShazamAttribution
-                            refreshedDrafts += 1
-                        }
-                        documents[index] = refreshed
-                        candidates.removeValue(forKey: existing.id)
-                        appliedCandidateIDs.removeValue(forKey: existing.id)
-                        appliedReleaseChoices.removeValue(forKey: existing.id)
-                    } else { documents.append(incoming) }
-                }
+                let library = AudioLibrary(documents: documents, folders: folders)
+                // Path normalization and draft/artwork comparisons can be expensive.
+                // Finish merging even after cancellation: successfully read files must be kept.
+                let merged = await Task.detached(priority: .userInitiated) {
+                    LibraryImportMerge(result, into: library)
+                }.value
+                documents = merged.library.documents
+                folders = merged.library.folders
+                let refreshedIDs = merged.refreshedIDs
+                candidates = candidates.filter { !refreshedIDs.contains($0.key) }
+                appliedCandidateIDs = appliedCandidateIDs.filter { !refreshedIDs.contains($0.key) }
+                appliedReleaseChoices = appliedReleaseChoices.filter { !refreshedIDs.contains($0.key) }
                 await persistNow()
                 if !failures.isEmpty {
                     notice = L10n.text("Some files could not be imported:\n", "部分文件未能导入：\n") + failures.prefix(8).joined(separator: "\n")
                 } else if result.documents.isEmpty && result.folders.isEmpty {
                     notice = L10n.text("No supported audio files found. Choose MP3, FLAC or M4A files.", "没有找到支持的音频文件。请选择 MP3、FLAC 或 M4A 文件。")
-                } else if refreshedDrafts > 0 {
+                } else if merged.refreshedDrafts > 0 {
                     notice = L10n.text("Original files refreshed. Your edited fields were kept in the draft; review them against the current file before saving.", "已重新读取原文件。你编辑过的字段仍保留在草稿中，请对照当前文件重新预览后保存。")
                 }
             } catch is CancellationError {

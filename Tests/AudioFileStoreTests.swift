@@ -41,6 +41,70 @@ final class AudioFileStoreTests: XCTestCase {
         XCTAssertNil(result.documents[0].importFolderIDs)
     }
 
+    func testReimporting600DownloadedFilesKeepsPersistedIdentitiesAndOrigins() async throws {
+        let libraryDirectory = root.appendingPathComponent("Music", isDirectory: true)
+        let downloadedFolder = libraryDirectory.appendingPathComponent("Connections/Server", isDirectory: true)
+        try FileManager.default.createDirectory(at: downloadedFolder, withIntermediateDirectories: true)
+        let folder = AudioFolder(url: downloadedFolder, libraryRelativePath: "Connections/Server",
+                                 persistentID: "downloaded-server")
+        var documents: [AudioDocument] = []
+        for index in 0..<600 {
+            let url = try fixture("track-\(index).mp3", directory: downloadedFolder)
+            let snapshot = try FixtureCodec().read(from: url)
+            documents.append(AudioDocument(
+                url: url, bookmark: nil, original: snapshot.tags, draft: snapshot.tags,
+                duration: snapshot.duration, error: nil, sourceHash: try AudioFileStore.fileHash(url),
+                importFolderIDs: [folder.id], sourceURL: root.appendingPathComponent("Source/track-\(index).mp3"),
+                libraryRelativePath: "Connections/Server/track-\(index).mp3"
+            ))
+        }
+        let store = makeStore(libraryDirectory: libraryDirectory)
+        try await store.persistLibrary(AudioLibrary(documents: documents, folders: [folder]))
+        let expected = Dictionary(uniqueKeysWithValues: documents.map { ($0.id, $0) })
+
+        let start = Date()
+        let imported = try await store.importFiles(from: [downloadedFolder])
+        print("600-file local reimport: \(Date().timeIntervalSince(start)) seconds")
+
+        XCTAssertTrue(imported.failures.isEmpty)
+        XCTAssertEqual(imported.documents.count, 600)
+        XCTAssertEqual(imported.folders.map(\.id), [folder.id])
+        XCTAssertEqual(Set(imported.documents.map(\.id)), Set(expected.keys))
+        for document in imported.documents {
+            XCTAssertEqual(document.sourceURL, expected[document.id]?.sourceURL)
+            XCTAssertEqual(document.url, expected[document.id]?.url)
+            XCTAssertEqual(document.importFolderIDs, [folder.id])
+        }
+        try assertNoTemporaryFiles()
+    }
+
+    func testImportUsesFirstPersistedIdentityWhenSourceAndLocalAliasesOverlap() async throws {
+        let store = makeStore()
+        let externalFolder = root.appendingPathComponent("Album", isDirectory: true)
+        try FileManager.default.createDirectory(at: externalFolder, withIntermediateDirectories: true)
+        _ = try fixture(directory: externalFolder)
+        let original = try await store.importFiles(from: [externalFolder])
+        let document = try XCTUnwrap(original.documents.first)
+        let folder = try XCTUnwrap(original.folders.first)
+        var earlierDocument = document
+        earlierDocument.id = UUID()
+        earlierDocument.url = store.libraryDirectory.appendingPathComponent("Earlier/song.mp3")
+        earlierDocument.libraryRelativePath = "Earlier/song.mp3"
+        earlierDocument.sourceURL = document.url
+        let earlierFolder = AudioFolder(url: store.libraryDirectory.appendingPathComponent("Earlier", isDirectory: true),
+                                        sourceURL: folder.url, libraryRelativePath: "Earlier", persistentID: "earlier-folder")
+        try await store.persistLibrary(AudioLibrary(documents: [earlierDocument, document],
+                                                   folders: [earlierFolder, folder]))
+
+        let imported = try await store.importFiles(from: [folder.url])
+
+        XCTAssertTrue(imported.failures.isEmpty)
+        XCTAssertEqual(imported.documents.map(\.id), [earlierDocument.id])
+        XCTAssertEqual(imported.documents.first?.sourceURL, earlierDocument.sourceURL)
+        XCTAssertEqual(imported.folders.map(\.id), [earlierFolder.id])
+        XCTAssertEqual(imported.documents.first?.importFolderIDs, [earlierFolder.id])
+    }
+
     func testMixedNestedAndSameNamedFoldersKeepDistinctOriginsWithoutDuplicateFiles() async throws {
         let firstAlbum = root.appendingPathComponent("First/Album", isDirectory: true)
         let disc = firstAlbum.appendingPathComponent("Disc 1", isDirectory: true)
