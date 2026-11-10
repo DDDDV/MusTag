@@ -41,6 +41,7 @@
 		2424F3F8490F5B84FB8B166B /* id3v2footer.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 74E70DE3E120CDB711EEEFF4 /* id3v2footer.cpp */; };
 		25DB6335FCF16A907DC74CB7 /* APIKeyStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 006D7C32194E2B0A83DA9734 /* APIKeyStore.swift */; };
 		2629CD430A543142024CC412 /* vorbisproperties.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 38C09C344F6F5BACF2D1F60D /* vorbisproperties.cpp */; };
+		28DEA93E0A3FAFF1824D6CE5 /* WebDAVFileProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F62733C60B8EC8EF34DA386 /* WebDAVFileProvider.swift */; };
 		2BC68231730A57393AE256A9 /* oggfile.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7C75A83625820268E2065B98 /* oggfile.cpp */; };
 		2C3B229D1CF41A91F05DF87F /* asftag.cpp in Sources */ = {isa = PBXBuildFile; fileRef = D56541D3DA90CB2AEBCE0E36 /* asftag.cpp */; };
 		2C4F9B4A1593A56D8FDF5BD6 /* libz.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 6EB1947113289D6A17DD6355 /* libz.tbd */; };
@@ -51,6 +52,7 @@
 		344948818E5A4F92EFD871E8 /* oggpage.cpp in Sources */ = {isa = PBXBuildFile; fileRef = FD053E589E4B07120B39184D /* oggpage.cpp */; };
 		34738233A784488D3A34F6C5 /* MTTagBridge.mm in Sources */ = {isa = PBXBuildFile; fileRef = 95B59F29F849424B23302886 /* MTTagBridge.mm */; };
 		347A1E77F7DF1C1D03C66263 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA59E2E5A8D3236DD4852B67 /* Models.swift */; };
+		37BBD0E3A8B004A046A7A3BD /* WiFiImportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D301E27A45D4CD20A1166C92 /* WiFiImportTests.swift */; };
 		38131681F68C74A95E9628FF /* libChromaprint.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 6E0ABF603D3ACE22800BC4CD /* libChromaprint.a */; };
 		38FE7E8A6BB8557F81B9445E /* apeproperties.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 28C5F658EC879CC2BB4FC60D /* apeproperties.cpp */; };
 		3C8E2045EB4DE6CED4B2FD82 /* chroma.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 97B40A4201DEF7D37E3A26A5 /* chroma.cpp */; };
@@ -58,13 +60,16 @@
 		3DD08EEED7AB50762CEAFDB1 /* MusicKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 838A56D3719594EE86D3EDA9 /* MusicKit.framework */; };
 		3FDCE94B587A9BBC90341A2B /* mpegproperties.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 922E05B37E416B209B69C0B8 /* mpegproperties.cpp */; };
 		407C3DA064F06B115259B2F4 /* mp4itemfactory.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7CEACB1B363C094D5C15BD93 /* mp4itemfactory.cpp */; };
+		4093682CA06A1B7919C01C24 /* MusicServerFileProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E5452DBF53700E3A5FD4B81 /* MusicServerFileProvider.swift */; };
 		411D5942FE68377CA1C04B76 /* xmproperties.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 1AF3F2DC08F79961405E53E4 /* xmproperties.cpp */; };
 		412129DDB96D4023BA67979C /* flacunknownmetadatablock.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 8336BB5D8C446F3BC39E780E /* flacunknownmetadatablock.cpp */; };
 		414BE6EE18AD442B0C2619A8 /* matroskaattachments.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 568B165ADBEEF4E8A7115819 /* matroskaattachments.cpp */; };
+		4374CA56F7AD382973CF39D9 /* WiFiImportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9A9E5B1F2E0038924F5D71D /* WiFiImportView.swift */; };
 		43C5595D7ABBC5649E02D688 /* chroma_resampler.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 41D924FB771100F9D82CBAC4 /* chroma_resampler.cpp */; };
 		46F88EEA3F965D56C86C5265 /* ShazamFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4815907F16E4AB322321791 /* ShazamFlowTests.swift */; };
 		4874A475291E179F5FC49CE4 /* dsffile.cpp in Sources */ = {isa = PBXBuildFile; fileRef = B08ADF15837EF19DF9F14563 /* dsffile.cpp */; };
 		49068DF3A0B97ACDDD12E969 /* matroskafile.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3FF9476E1889C07E0D4F6660 /* matroskafile.cpp */; };
+		4A3C550A3A983B1A139F810F /* SMBClient in Frameworks */ = {isa = PBXBuildFile; productRef = 7CB52D7B27934C2AD5A05AB1 /* SMBClient */; };
 		4BB231C704A6DF0F1201FF4C /* fft.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 54D008E264DFB84173B5A892 /* fft.cpp */; };
 		4D3447B63A039F396465EE7E /* generalencapsulatedobjectframe.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 045905D75B05FA13F065FE4D /* generalencapsulatedobjectframe.cpp */; };
 		4DFA8AE246F79AA27059A13B /* tpicturetype.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 6696551FF71792FD7C6C6E60 /* tpicturetype.cpp */; };
@@ -76,6 +81,7 @@
 		51726937A0074CCF073583E8 /* ebmlmasterelement.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 0D80FE4FF9623305058810A9 /* ebmlmasterelement.cpp */; };
 		54A0AFB794DA461F6815FBA7 /* TrackEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F2CB705542CDD2793666BCE /* TrackEditorView.swift */; };
 		562D0E63BEED4AE4239CF55F /* matroskaproperties.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 24247F31A512C6A13F65C0FE /* matroskaproperties.cpp */; };
+		56554F31825228275DDDE5D2 /* ConnectionDownloadTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11CAB0CB0753C81926470C1B /* ConnectionDownloadTests.swift */; };
 		56D7646A351000DA4AED92E3 /* ebmlmktags.cpp in Sources */ = {isa = PBXBuildFile; fileRef = D223F8C6D7C44DFAB7D1AC86 /* ebmlmktags.cpp */; };
 		580FC2049A5D9A9C9B9F7A9F /* matroskaattachedfile.cpp in Sources */ = {isa = PBXBuildFile; fileRef = B5BB0EA76A6616E70BEC91BD /* matroskaattachedfile.cpp */; };
 		59CAB9AE8C3ECAAE2AB20139 /* tag.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E339CEB3A7F6AE90C830EA3E /* tag.cpp */; };
@@ -101,6 +107,7 @@
 		6E913C54EB9984D6092085B4 /* shortentag.cpp in Sources */ = {isa = PBXBuildFile; fileRef = A0661A3E1BD9D94A79A26690 /* shortentag.cpp */; };
 		6E932CB51BC739CDE26B5AE2 /* matroskachapteredition.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 430EB0FDF27C5C78C54C491E /* matroskachapteredition.cpp */; };
 		6EDCFD4EE4F43AFCA7B18489 /* mp4coverart.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 63397286511FDB7C295194ED /* mp4coverart.cpp */; };
+		730101575042145C23B5403F /* MusicServerHTTP.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2301A97207CC17A0D4A3E634 /* MusicServerHTTP.swift */; };
 		74EC64D6623A1387760E4EC0 /* speexfile.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 1E6C07EDAE6B59FB0EB8B367 /* speexfile.cpp */; };
 		75167958A3D80D521455FA6F /* dsfproperties.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 51F86E771B86302CD1842A4C /* dsfproperties.cpp */; };
 		770F42C5BA0C6B4545DFEEFC /* tiostream.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 333E3A49183EDAB3CFA65776 /* tiostream.cpp */; };
@@ -111,6 +118,7 @@
 		7A739CB28F7D19A50F8BB8E2 /* Licenses in Resources */ = {isa = PBXBuildFile; fileRef = 87577CE756D76C43B6ED0D4D /* Licenses */; };
 		7A766688F87404B19CE35CDD /* MainTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A844FEB51E7438CF5763812 /* MainTabView.swift */; };
 		7B4D563061971A79BB4CE85B /* textidentificationframe.cpp in Sources */ = {isa = PBXBuildFile; fileRef = D8CFA9A2C2EC476B066C35C1 /* textidentificationframe.cpp */; };
+		7CCD587D7C2FEE4F43E10E2D /* RemoteFileTransportSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = D906A79E6776623383498AEC /* RemoteFileTransportSupport.swift */; };
 		7E157D4874CEAAC06DD7AC0A /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4261E1C02FDC23A6F91D7442 /* LibraryView.swift */; };
 		7E865189E89A8F68DAC6F71D /* WelcomeIllustration.swift in Sources */ = {isa = PBXBuildFile; fileRef = E74284870B49B0B1EEB4144B /* WelcomeIllustration.swift */; };
 		7E8E1CF4A145F2AF2626CDC0 /* mpegfile.cpp in Sources */ = {isa = PBXBuildFile; fileRef = ED794F75BA57F49D617D73DD /* mpegfile.cpp */; };
@@ -122,6 +130,7 @@
 		84E3E73CB6F207A5A0C7C238 /* rifffile.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 12B100957FBEDB99BFC67FD4 /* rifffile.cpp */; };
 		87EFB4B053CE0E3733F90A2D /* dsdifffile.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E3BF2D5B6BC3D4182A86369D /* dsdifffile.cpp */; };
 		88EC3E67AD59033F086F67D6 /* speexproperties.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 683B3B2F068C08DC2CA2044D /* speexproperties.cpp */; };
+		8A04EA1AAC24930400EB352D /* FTPFileProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7035960675CDFEEAA8DEF0D /* FTPFileProvider.swift */; };
 		8A80417D5A9AEDFF15A4AA50 /* ArtworkFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACA7ADB6162DCCACA2AFA735 /* ArtworkFlowTests.swift */; };
 		8C08CD8F59E9BA794BF3C105 /* id3v2synchdata.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 72FC0F7767F87CB4B9DEAB3C /* id3v2synchdata.cpp */; };
 		8C80EA53C22B6FA2D1E245DA /* tfile.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 462E861CCE80F764978CD96B /* tfile.cpp */; };
@@ -136,6 +145,7 @@
 		953B412BCF05201A74947833 /* fft_lib_vdsp.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3A6EFF31EF00DBA7657DA948 /* fft_lib_vdsp.cpp */; };
 		96711DA12E399597D6ACEAC8 /* id3v2framefactory.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 5634952D56665FBABD26E1A2 /* id3v2framefactory.cpp */; };
 		96B010004334BEBAC5699332 /* mp4stem.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3C505B8C7C811F58CED2B8BF /* mp4stem.cpp */; };
+		975A7A55699A2349571058F2 /* SMBFileProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0D9ED5E6C4D0F70B10A31C3 /* SMBFileProvider.swift */; };
 		98B4568A56040EAAF7453A72 /* tversionnumber.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 07F4C3DC723EA0C913C7660E /* tversionnumber.cpp */; };
 		9C0B9245166DCEB696587BD0 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = D93CD27562154D464B60054C /* Assets.xcassets */; };
 		9CBA14D19BD4138F0B1F0753 /* mpcfile.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 885380EDB09C8C4E77E865A2 /* mpcfile.cpp */; };
@@ -146,7 +156,9 @@
 		A16F1822D0488DDEEA95FD40 /* uniquefileidentifierframe.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 15CD85AA21079E3DBF833626 /* uniquefileidentifierframe.cpp */; };
 		A1C5279AD36E79474E68591C /* fingerprint_compressor.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 5D372EEF06103EBF2D558381 /* fingerprint_compressor.cpp */; };
 		A4C59315E5A0C6FA6995E8D4 /* fingerprint_matcher.cpp in Sources */ = {isa = PBXBuildFile; fileRef = CF8B0E84E0549B056062C1B3 /* fingerprint_matcher.cpp */; };
+		A53B5DA447372197C0886D97 /* WiFiImportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B812107FEC94FB79B8F98639 /* WiFiImportService.swift */; };
 		A54756D1F500D02EDB80CF34 /* tableofcontentsframe.cpp in Sources */ = {isa = PBXBuildFile; fileRef = EA19D28EDEB1B8643A2D0F84 /* tableofcontentsframe.cpp */; };
+		A564DF2FA2A050AA99DD7175 /* RemoteFileProviderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBB903A570AAE4A6E5955D22 /* RemoteFileProviderTests.swift */; };
 		A68203D65933931C23D9B968 /* ebmlmkcues.cpp in Sources */ = {isa = PBXBuildFile; fileRef = AC12F93E997BB685624B6258 /* ebmlmkcues.cpp */; };
 		A8AE5F67944D5683244D08DD /* tbytevector.cpp in Sources */ = {isa = PBXBuildFile; fileRef = CD6612A6F7AEA11AE121E0CD /* tbytevector.cpp */; };
 		A9392CCE9FC742E27D6CCDBE /* tagunion.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E9AE50C93A4011E723B644BB /* tagunion.cpp */; };
@@ -159,6 +171,7 @@
 		B949482C6CC86656353EE5BB /* audioproperties.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 6F64D6F459B2C54FEB18C004 /* audioproperties.cpp */; };
 		B966B55E2EA9D61B0D674503 /* oggflacfile.cpp in Sources */ = {isa = PBXBuildFile; fileRef = D9209EC15CF897D35DD50B65 /* oggflacfile.cpp */; };
 		BA435037F771C0FF724D4F79 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8E0364819302C859D754E82 /* SettingsView.swift */; };
+		BBEBD24D7734D5D2A0E6759A /* ConnectionModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCA74A80C586142636C3C118 /* ConnectionModels.swift */; };
 		BFC09146C3936E3D18984D43 /* ConnectionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6898BDC066FE5BA0CFF26068 /* ConnectionsView.swift */; };
 		C1306A6A573E04BFB5A5C960 /* asfattribute.cpp in Sources */ = {isa = PBXBuildFile; fileRef = C55278699EA745C71FAFE90C /* asfattribute.cpp */; };
 		C1567D84D206A1CA78832837 /* ShazamRecognitionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43D76111BE9C2F1B7419D8C2 /* ShazamRecognitionTests.swift */; };
@@ -192,6 +205,7 @@
 		E1D95449B76F80799F25EE5C /* AppleMusicMetadataTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86B663F725EF1153B6BA1640 /* AppleMusicMetadataTests.swift */; };
 		E33A79D5C0D977D8B15309C8 /* ebmlmkattachments.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 631406C22A6C315D79D39E2C /* ebmlmkattachments.cpp */; };
 		E42805FE005B783CE55F5851 /* MusicRecognitionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4004D5F6EF721D62A5F28880 /* MusicRecognitionTests.swift */; };
+		E4ADCA38D99A3ABC0FF28385 /* ConnectionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC2740A34C7C2A10266ACDC2 /* ConnectionStore.swift */; };
 		E4BF7AB066380327F5B7A2FF /* tbytevectorlist.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 22DD245AB0708F99C98768C1 /* tbytevectorlist.cpp */; };
 		E4CFF12C5DC8CA005EA6155F /* ebmlmkseekhead.cpp in Sources */ = {isa = PBXBuildFile; fileRef = D6D3C2DE7DAD70624AA0F077 /* ebmlmkseekhead.cpp */; };
 		E5C6AE126B4633A163D39450 /* ownershipframe.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 2A6F9BCE855A201251087067 /* ownershipframe.cpp */; };
@@ -203,16 +217,20 @@
 		EABC182B14FDC7533C112728 /* ebmldeferredbinaryelement.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 367B0026C8338FC4A7C66C28 /* ebmldeferredbinaryelement.cpp */; };
 		EBC2B80E6D8D5B929886A8D0 /* AudioDocumentPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43893B92F46E3599A78B9789 /* AudioDocumentPicker.swift */; };
 		ECE36BFE754C488C96D1EBA3 /* oggpageheader.cpp in Sources */ = {isa = PBXBuildFile; fileRef = B194170BA7F478F7FCDA490B /* oggpageheader.cpp */; };
+		ED3174FC082AC59B4AF83355 /* AudioMetadataBackup.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9F7CA9D8CFAA27D96D3861F /* AudioMetadataBackup.swift */; };
 		EDD9CB70168FD24C320EF9EF /* GenreLocalization.swift in Sources */ = {isa = PBXBuildFile; fileRef = A33E08AC468E73081E6181B2 /* GenreLocalization.swift */; };
 		F026FB4AC176612B798B1031 /* fingerprint_decompressor.cpp in Sources */ = {isa = PBXBuildFile; fileRef = F002C23B0ADB891998FF5C8F /* fingerprint_decompressor.cpp */; };
 		F1BDF2F1A7A0F18361C79CCC /* modfile.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 29999A2E64F9AC1B3DBBC306 /* modfile.cpp */; };
 		F25F90A1D7758EE851B49BB1 /* libTagLib.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 4C529CB3AFAEB278C3D3401E /* libTagLib.a */; };
 		F2ACE36B9DBC93632F2AB6D1 /* eventtimingcodesframe.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E0596E2518C501D2CC428D62 /* eventtimingcodesframe.cpp */; };
+		F2CF319C2D6C86253D20F0EE /* MusicServerConnectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F2CA103A63E5AA8D34F74C8 /* MusicServerConnectionTests.swift */; };
+		F394B053FA12C62DFBCF76DD /* ConnectionDownloads.swift in Sources */ = {isa = PBXBuildFile; fileRef = 423262B125132F66C53C42BB /* ConnectionDownloads.swift */; };
 		F3E6A7042253F2E0BFF94C06 /* Accelerate.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3A4A2E4A8683AF67D524B9C1 /* Accelerate.framework */; };
 		F40B5F60A31303BA63D8266D /* asffile.cpp in Sources */ = {isa = PBXBuildFile; fileRef = CD8F3E3DA7BF657322716C73 /* asffile.cpp */; };
 		F48AC306DC7A250C01D5E1BC /* podcastframe.cpp in Sources */ = {isa = PBXBuildFile; fileRef = A6BC670D78A604DA34C7A1BB /* podcastframe.cpp */; };
 		F63A07F515C93B35452E9259 /* mp4tag.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 6CB58FA72E4A3CD6157E245A /* mp4tag.cpp */; };
 		F647226095C31201BD31443E /* mp4atom.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 88D29EC989D6BEA16DDB9958 /* mp4atom.cpp */; };
+		F65342C3177B9FAA78AA777D /* AudioMetadataBackupTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7539C1F42364E7024DE5722 /* AudioMetadataBackupTests.swift */; };
 		F7369280A063F1715E86E7BB /* NativeAudioTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72097A2B45740AF7A85AAB7B /* NativeAudioTests.swift */; };
 		FA09337CA4022194B64DE0E2 /* commentsframe.cpp in Sources */ = {isa = PBXBuildFile; fileRef = C950580E9D09990179612E21 /* commentsframe.cpp */; };
 		FE657393FBA6147AF4F3B356 /* mp4properties.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 9F52F98E7B295CB69345CAFA /* mp4properties.cpp */; };
@@ -261,6 +279,7 @@
 		0AED8F8F3E85670B7F9EC4CE /* opusfile.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = opusfile.cpp; sourceTree = "<group>"; };
 		0D80FE4FF9623305058810A9 /* ebmlmasterelement.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ebmlmasterelement.cpp; sourceTree = "<group>"; };
 		0E5A0DBB261EC23B41C9B0B5 /* CoverArtServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoverArtServiceTests.swift; sourceTree = "<group>"; };
+		11CAB0CB0753C81926470C1B /* ConnectionDownloadTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionDownloadTests.swift; sourceTree = "<group>"; };
 		11F24213AF4B8F1F0E681B73 /* ShazamRecognitionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShazamRecognitionService.swift; sourceTree = "<group>"; };
 		12933F254B0284D8C7093D45 /* unknownframe.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = unknownframe.cpp; sourceTree = "<group>"; };
 		12B100957FBEDB99BFC67FD4 /* rifffile.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = rifffile.cpp; sourceTree = "<group>"; };
@@ -282,6 +301,7 @@
 		2175C52B4D9725677F6F912D /* tstring.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = tstring.cpp; sourceTree = "<group>"; };
 		225CB0B41E253DC88315ECB1 /* wavpackproperties.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = wavpackproperties.cpp; sourceTree = "<group>"; };
 		22DD245AB0708F99C98768C1 /* tbytevectorlist.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = tbytevectorlist.cpp; sourceTree = "<group>"; };
+		2301A97207CC17A0D4A3E634 /* MusicServerHTTP.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicServerHTTP.swift; sourceTree = "<group>"; };
 		23925C0C3E6E158320CFC6F8 /* chromaprint.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = chromaprint.cpp; sourceTree = "<group>"; };
 		24247F31A512C6A13F65C0FE /* matroskaproperties.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = matroskaproperties.cpp; sourceTree = "<group>"; };
 		27E9ED9CFF94E76488302A4F /* mpegheader.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = mpegheader.cpp; sourceTree = "<group>"; };
@@ -304,11 +324,13 @@
 		3C505B8C7C811F58CED2B8BF /* mp4stem.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = mp4stem.cpp; sourceTree = "<group>"; };
 		3DA05713B13FBFF1688F27C3 /* id3v2header.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = id3v2header.cpp; sourceTree = "<group>"; };
 		3EBA876FD7E2FA8B4FED14E4 /* wavfile.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = wavfile.cpp; sourceTree = "<group>"; };
+		3F2CA103A63E5AA8D34F74C8 /* MusicServerConnectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicServerConnectionTests.swift; sourceTree = "<group>"; };
 		3F5992D6FBCF02575203E611 /* WelcomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WelcomeView.swift; sourceTree = "<group>"; };
 		3FF9476E1889C07E0D4F6660 /* matroskafile.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = matroskafile.cpp; sourceTree = "<group>"; };
 		4004D5F6EF721D62A5F28880 /* MusicRecognitionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicRecognitionTests.swift; sourceTree = "<group>"; };
 		41D924FB771100F9D82CBAC4 /* chroma_resampler.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = chroma_resampler.cpp; sourceTree = "<group>"; };
 		4219BC9F73C6F7C6F32D5D8E /* id3v1genres.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = id3v1genres.cpp; sourceTree = "<group>"; };
+		423262B125132F66C53C42BB /* ConnectionDownloads.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionDownloads.swift; sourceTree = "<group>"; };
 		42360C23139E8586C44ABBA6 /* MusTag.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = MusTag.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		4261E1C02FDC23A6F91D7442 /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
 		4293E79E1ABCEEA5E2B54DC6 /* tzlib.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = tzlib.cpp; sourceTree = "<group>"; };
@@ -316,6 +338,7 @@
 		43893B92F46E3599A78B9789 /* AudioDocumentPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioDocumentPicker.swift; sourceTree = "<group>"; };
 		43D76111BE9C2F1B7419D8C2 /* ShazamRecognitionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShazamRecognitionTests.swift; sourceTree = "<group>"; };
 		44FC669791A1055F74AF5610 /* tfilestream.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = tfilestream.cpp; sourceTree = "<group>"; };
+		451AFF0933C343B7F4A2D6B5 /* SMBClient */ = {isa = PBXFileReference; lastKnownFileType = folder; name = SMBClient; path = Vendor/SMBClient; sourceTree = SOURCE_ROOT; };
 		462E861CCE80F764978CD96B /* tfile.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = tfile.cpp; sourceTree = "<group>"; };
 		474095A4FC86364C19780FD5 /* itfile.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = itfile.cpp; sourceTree = "<group>"; };
 		4B4C5A3ADBC09B0A19F589FF /* modproperties.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = modproperties.cpp; sourceTree = "<group>"; };
@@ -354,7 +377,9 @@
 		6CB58FA72E4A3CD6157E245A /* mp4tag.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = mp4tag.cpp; sourceTree = "<group>"; };
 		6E0ABF603D3ACE22800BC4CD /* libChromaprint.a */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = archive.ar; path = libChromaprint.a; sourceTree = BUILT_PRODUCTS_DIR; };
 		6E3B1E5E89C0C54E4CF21FE4 /* mp4chapter.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = mp4chapter.cpp; sourceTree = "<group>"; };
+		6E5452DBF53700E3A5FD4B81 /* MusicServerFileProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicServerFileProvider.swift; sourceTree = "<group>"; };
 		6EB1947113289D6A17DD6355 /* libz.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libz.tbd; path = usr/lib/libz.tbd; sourceTree = SDKROOT; };
+		6F62733C60B8EC8EF34DA386 /* WebDAVFileProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebDAVFileProvider.swift; sourceTree = "<group>"; };
 		6F64D6F459B2C54FEB18C004 /* audioproperties.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = audioproperties.cpp; sourceTree = "<group>"; };
 		709F04E888C53C79B6CE88BB /* CoverArtService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoverArtService.swift; sourceTree = "<group>"; };
 		712BBF2C73FEEF287612770F /* ebmlvoidelement.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ebmlvoidelement.cpp; sourceTree = "<group>"; };
@@ -403,6 +428,7 @@
 		A322694EED58A89A2AEDAA84 /* fingerprinter.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = fingerprinter.cpp; sourceTree = "<group>"; };
 		A33E08AC468E73081E6181B2 /* GenreLocalization.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GenreLocalization.swift; sourceTree = "<group>"; };
 		A6BC670D78A604DA34C7A1BB /* podcastframe.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = podcastframe.cpp; sourceTree = "<group>"; };
+		A7539C1F42364E7024DE5722 /* AudioMetadataBackupTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioMetadataBackupTests.swift; sourceTree = "<group>"; };
 		A9601DDBABD2DF107B95D6FA /* AudioFileStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioFileStore.swift; sourceTree = "<group>"; };
 		A97F719622D9FD3F10197D7F /* dsdiffdiintag.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = dsdiffdiintag.cpp; sourceTree = "<group>"; };
 		A9E452440683B88D51A5F13C /* matroskachapter.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = matroskachapter.cpp; sourceTree = "<group>"; };
@@ -413,6 +439,7 @@
 		B194170BA7F478F7FCDA490B /* oggpageheader.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = oggpageheader.cpp; sourceTree = "<group>"; };
 		B33FE5C07EFC75B2DC5B2160 /* synchronizedlyricsframe.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = synchronizedlyricsframe.cpp; sourceTree = "<group>"; };
 		B5BB0EA76A6616E70BEC91BD /* matroskaattachedfile.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = matroskaattachedfile.cpp; sourceTree = "<group>"; };
+		B812107FEC94FB79B8F98639 /* WiFiImportService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WiFiImportService.swift; sourceTree = "<group>"; };
 		BAE335AAD1D773E1E80C4160 /* ebmlelement.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ebmlelement.cpp; sourceTree = "<group>"; };
 		BC06A08D1109A277FBD25119 /* audio_processor.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = audio_processor.cpp; sourceTree = "<group>"; };
 		C0B92ED808E744FCE26E1FE2 /* matroskacues.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = matroskacues.cpp; sourceTree = "<group>"; };
@@ -430,32 +457,41 @@
 		D1745190C661709EEE6340B9 /* tvariant.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = tvariant.cpp; sourceTree = "<group>"; };
 		D223F8C6D7C44DFAB7D1AC86 /* ebmlmktags.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ebmlmktags.cpp; sourceTree = "<group>"; };
 		D2C52D7A010D931F68944954 /* matroskasegment.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = matroskasegment.cpp; sourceTree = "<group>"; };
+		D301E27A45D4CD20A1166C92 /* WiFiImportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WiFiImportTests.swift; sourceTree = "<group>"; };
 		D3DFC54EF135CE36B6AB4284 /* mp4qtchapterlist.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = mp4qtchapterlist.cpp; sourceTree = "<group>"; };
 		D4815907F16E4AB322321791 /* ShazamFlowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShazamFlowTests.swift; sourceTree = "<group>"; };
 		D551D50A36D7582B6F8379A7 /* CoverArtUITestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoverArtUITestSupport.swift; sourceTree = "<group>"; };
 		D56541D3DA90CB2AEBCE0E36 /* asftag.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = asftag.cpp; sourceTree = "<group>"; };
 		D6D3C2DE7DAD70624AA0F077 /* ebmlmkseekhead.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ebmlmkseekhead.cpp; sourceTree = "<group>"; };
 		D8CFA9A2C2EC476B066C35C1 /* textidentificationframe.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = textidentificationframe.cpp; sourceTree = "<group>"; };
+		D906A79E6776623383498AEC /* RemoteFileTransportSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteFileTransportSupport.swift; sourceTree = "<group>"; };
 		D9209EC15CF897D35DD50B65 /* oggflacfile.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = oggflacfile.cpp; sourceTree = "<group>"; };
 		D93CD27562154D464B60054C /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		D968BE3701E03C8B0037F1CC /* simhash.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = simhash.cpp; sourceTree = "<group>"; };
 		DAA59B5041B8DE7D31CCE423 /* apefile.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = apefile.cpp; sourceTree = "<group>"; };
+		DBB903A570AAE4A6E5955D22 /* RemoteFileProviderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteFileProviderTests.swift; sourceTree = "<group>"; };
 		DC9ED6E23D3DE6ECE525F7FF /* ebmluintelement.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ebmluintelement.cpp; sourceTree = "<group>"; };
+		DCA74A80C586142636C3C118 /* ConnectionModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionModels.swift; sourceTree = "<group>"; };
 		DCF6CE4264C7ABCC608B80BF /* asfproperties.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = asfproperties.cpp; sourceTree = "<group>"; };
 		E02191D434DBA9D10A5074CF /* trueaudioproperties.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = trueaudioproperties.cpp; sourceTree = "<group>"; };
 		E0596E2518C501D2CC428D62 /* eventtimingcodesframe.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = eventtimingcodesframe.cpp; sourceTree = "<group>"; };
 		E339CEB3A7F6AE90C830EA3E /* tag.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = tag.cpp; sourceTree = "<group>"; };
 		E3BF2D5B6BC3D4182A86369D /* dsdifffile.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = dsdifffile.cpp; sourceTree = "<group>"; };
 		E4CA53F301D011AC12AF3F68 /* matroskachapters.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = matroskachapters.cpp; sourceTree = "<group>"; };
+		E7035960675CDFEEAA8DEF0D /* FTPFileProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FTPFileProvider.swift; sourceTree = "<group>"; };
 		E74284870B49B0B1EEB4144B /* WelcomeIllustration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WelcomeIllustration.swift; sourceTree = "<group>"; };
 		E791A0FC84077C260992A7D0 /* chapterframe.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = chapterframe.cpp; sourceTree = "<group>"; };
 		E7FA47EDC0C9A4A6971EE57D /* privateframe.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = privateframe.cpp; sourceTree = "<group>"; };
+		E9A9E5B1F2E0038924F5D71D /* WiFiImportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WiFiImportView.swift; sourceTree = "<group>"; };
 		E9AE50C93A4011E723B644BB /* tagunion.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = tagunion.cpp; sourceTree = "<group>"; };
+		E9F7CA9D8CFAA27D96D3861F /* AudioMetadataBackup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioMetadataBackup.swift; sourceTree = "<group>"; };
 		EA19D28EDEB1B8643A2D0F84 /* tableofcontentsframe.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = tableofcontentsframe.cpp; sourceTree = "<group>"; };
 		EA59E2E5A8D3236DD4852B67 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		EC2740A34C7C2A10266ACDC2 /* ConnectionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionStore.swift; sourceTree = "<group>"; };
 		ED10DB69DA0D862CE590D156 /* urllinkframe.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = urllinkframe.cpp; sourceTree = "<group>"; };
 		ED794F75BA57F49D617D73DD /* mpegfile.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = mpegfile.cpp; sourceTree = "<group>"; };
 		F002C23B0ADB891998FF5C8F /* fingerprint_decompressor.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = fingerprint_decompressor.cpp; sourceTree = "<group>"; };
+		F0D9ED5E6C4D0F70B10A31C3 /* SMBFileProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SMBFileProvider.swift; sourceTree = "<group>"; };
 		F2232E6669B6D681EC89DB7F /* ebmlutils.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ebmlutils.cpp; sourceTree = "<group>"; };
 		F2E16084D0D7228D46A97419 /* itproperties.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = itproperties.cpp; sourceTree = "<group>"; };
 		F2FCB4BB1F1B457FAFC1B9B9 /* NativeMetadataCodec.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeMetadataCodec.swift; sourceTree = "<group>"; };
@@ -476,6 +512,7 @@
 			files = (
 				F25F90A1D7758EE851B49BB1 /* libTagLib.a in Frameworks */,
 				38131681F68C74A95E9628FF /* libChromaprint.a in Frameworks */,
+				4A3C550A3A983B1A139F810F /* SMBClient in Frameworks */,
 				F3E6A7042253F2E0BFF94C06 /* Accelerate.framework in Frameworks */,
 				336AAB19DB59A2082D8A7BDF /* AVFoundation.framework in Frameworks */,
 				19A33280E212A0FF036586EB /* ShazamKit.framework in Frameworks */,
@@ -632,6 +669,7 @@
 				2F2CB705542CDD2793666BCE /* TrackEditorView.swift */,
 				E74284870B49B0B1EEB4144B /* WelcomeIllustration.swift */,
 				3F5992D6FBCF02575203E611 /* WelcomeView.swift */,
+				E9A9E5B1F2E0038924F5D71D /* WiFiImportView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -651,6 +689,7 @@
 				D93CD27562154D464B60054C /* Assets.xcassets */,
 				9F232EBAD55BE76549D50B9B /* Info.plist */,
 				8E1C05E57B97F84B0794E5F4 /* MusTagApp.swift */,
+				5CA11B1E1F93667EF7E11538 /* Connections */,
 				7E01544DDF3DA64E4126A356 /* Core */,
 				807A0330A6A3489E6ABABCDF /* Resources */,
 				91B0923052EA8914543D81B4 /* Services */,
@@ -678,6 +717,19 @@
 				EA11069117A866139DDEBB6A /* ebml */,
 			);
 			path = matroska;
+			sourceTree = "<group>";
+		};
+		5CA11B1E1F93667EF7E11538 /* Connections */ = {
+			isa = PBXGroup;
+			children = (
+				E7035960675CDFEEAA8DEF0D /* FTPFileProvider.swift */,
+				6E5452DBF53700E3A5FD4B81 /* MusicServerFileProvider.swift */,
+				2301A97207CC17A0D4A3E634 /* MusicServerHTTP.swift */,
+				D906A79E6776623383498AEC /* RemoteFileTransportSupport.swift */,
+				F0D9ED5E6C4D0F70B10A31C3 /* SMBFileProvider.swift */,
+				6F62733C60B8EC8EF34DA386 /* WebDAVFileProvider.swift */,
+			);
+			path = Connections;
 			sourceTree = "<group>";
 		};
 		6239716E62AAD7007EEA0C94 /* id3v1 */ = {
@@ -760,6 +812,7 @@
 			isa = PBXGroup;
 			children = (
 				ADBF4B8366B7C2F346153CFA /* AppModel.swift */,
+				DCA74A80C586142636C3C118 /* ConnectionModels.swift */,
 				A33E08AC468E73081E6181B2 /* GenreLocalization.swift */,
 				EA59E2E5A8D3236DD4852B67 /* Models.swift */,
 			);
@@ -778,6 +831,7 @@
 			isa = PBXGroup;
 			children = (
 				B93DAA21E05FA30467483EF2 /* Native */,
+				96FAB3A458CAE2A7C1B18F07 /* Packages */,
 				49FE9C1DAC77A5BCACC84655 /* Sources */,
 				F898633D19345F16956424A2 /* Tests */,
 				158ED3980E700C2F07E109E7 /* UITests */,
@@ -814,14 +868,26 @@
 				006D7C32194E2B0A83DA9734 /* APIKeyStore.swift */,
 				5A0F5A06809850A908664C88 /* AppleMusicMetadataService.swift */,
 				A9601DDBABD2DF107B95D6FA /* AudioFileStore.swift */,
+				E9F7CA9D8CFAA27D96D3861F /* AudioMetadataBackup.swift */,
+				423262B125132F66C53C42BB /* ConnectionDownloads.swift */,
+				EC2740A34C7C2A10266ACDC2 /* ConnectionStore.swift */,
 				709F04E888C53C79B6CE88BB /* CoverArtService.swift */,
 				D551D50A36D7582B6F8379A7 /* CoverArtUITestSupport.swift */,
 				52FCF17EB854482C14D31D07 /* MusicRecognitionService.swift */,
 				1669584EDD2F27F9BC173519 /* NativeAudio.swift */,
 				F2FCB4BB1F1B457FAFC1B9B9 /* NativeMetadataCodec.swift */,
 				11F24213AF4B8F1F0E681B73 /* ShazamRecognitionService.swift */,
+				B812107FEC94FB79B8F98639 /* WiFiImportService.swift */,
 			);
 			path = Services;
+			sourceTree = "<group>";
+		};
+		96FAB3A458CAE2A7C1B18F07 /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				451AFF0933C343B7F4A2D6B5 /* SMBClient */,
+			);
+			name = Packages;
 			sourceTree = "<group>";
 		};
 		A1300F0FA316644858F6B546 /* flac */ = {
@@ -1040,13 +1106,18 @@
 				86B663F725EF1153B6BA1640 /* AppleMusicMetadataTests.swift */,
 				ACA7ADB6162DCCACA2AFA735 /* ArtworkFlowTests.swift */,
 				C555F0107DC55686186D5626 /* AudioFileStoreTests.swift */,
+				A7539C1F42364E7024DE5722 /* AudioMetadataBackupTests.swift */,
+				11CAB0CB0753C81926470C1B /* ConnectionDownloadTests.swift */,
 				0E5A0DBB261EC23B41C9B0B5 /* CoverArtServiceTests.swift */,
 				611076F922DC87F6F4D79C69 /* Fixtures */,
 				2C91B40993998C25BB81D43E /* LibraryFlowTests.swift */,
 				4004D5F6EF721D62A5F28880 /* MusicRecognitionTests.swift */,
+				3F2CA103A63E5AA8D34F74C8 /* MusicServerConnectionTests.swift */,
 				72097A2B45740AF7A85AAB7B /* NativeAudioTests.swift */,
+				DBB903A570AAE4A6E5955D22 /* RemoteFileProviderTests.swift */,
 				D4815907F16E4AB322321791 /* ShazamFlowTests.swift */,
 				43D76111BE9C2F1B7419D8C2 /* ShazamRecognitionTests.swift */,
+				D301E27A45D4CD20A1166C92 /* WiFiImportTests.swift */,
 			);
 			path = Tests;
 			sourceTree = "<group>";
@@ -1132,6 +1203,7 @@
 			);
 			name = MusTag;
 			packageProductDependencies = (
+				7CB52D7B27934C2AD5A05AB1 /* SMBClient */,
 			);
 			productName = MusTag;
 			productReference = 42360C23139E8586C44ABBA6 /* MusTag.app */;
@@ -1209,6 +1281,9 @@
 			);
 			mainGroup = 831E96A3BAFFE31CC7867A0A;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				F5ED552CF7628C8EFED1AF3B /* XCLocalSwiftPackageReference "Vendor/SMBClient" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 86356EB15FB550A356C4053C /* Products */;
 			projectDirPath = "";
@@ -1262,9 +1337,14 @@
 				DF2382BDB4423973B4CF40F3 /* ArtworkView.swift in Sources */,
 				EBC2B80E6D8D5B929886A8D0 /* AudioDocumentPicker.swift in Sources */,
 				69AFBE37EB4A274B520B182A /* AudioFileStore.swift in Sources */,
+				ED3174FC082AC59B4AF83355 /* AudioMetadataBackup.swift in Sources */,
+				F394B053FA12C62DFBCF76DD /* ConnectionDownloads.swift in Sources */,
+				BBEBD24D7734D5D2A0E6759A /* ConnectionModels.swift in Sources */,
+				E4ADCA38D99A3ABC0FF28385 /* ConnectionStore.swift in Sources */,
 				BFC09146C3936E3D18984D43 /* ConnectionsView.swift in Sources */,
 				8D11E32FE07760A99BBD353D /* CoverArtService.swift in Sources */,
 				DF9FD25832565875D5C162FD /* CoverArtUITestSupport.swift in Sources */,
+				8A04EA1AAC24930400EB352D /* FTPFileProvider.swift in Sources */,
 				EDD9CB70168FD24C320EF9EF /* GenreLocalization.swift in Sources */,
 				7E157D4874CEAAC06DD7AC0A /* LibraryView.swift in Sources */,
 				34738233A784488D3A34F6C5 /* MTTagBridge.mm in Sources */,
@@ -1272,14 +1352,21 @@
 				347A1E77F7DF1C1D03C66263 /* Models.swift in Sources */,
 				81F41D12E3D2FEE05A53E23C /* MusTagApp.swift in Sources */,
 				DC6D15E5AD6A90963EEFCA13 /* MusicRecognitionService.swift in Sources */,
+				4093682CA06A1B7919C01C24 /* MusicServerFileProvider.swift in Sources */,
+				730101575042145C23B5403F /* MusicServerHTTP.swift in Sources */,
 				0D2982D1AFB216C72D9C1A90 /* NativeAudio.swift in Sources */,
 				CECBDA0CAEC33860796FE2C7 /* NativeMetadataCodec.swift in Sources */,
+				7CCD587D7C2FEE4F43E10E2D /* RemoteFileTransportSupport.swift in Sources */,
 				C4FCBC965BC7353B0C96D475 /* ReviewSheet.swift in Sources */,
+				975A7A55699A2349571058F2 /* SMBFileProvider.swift in Sources */,
 				BA435037F771C0FF724D4F79 /* SettingsView.swift in Sources */,
 				B73757782401736791CCC542 /* ShazamRecognitionService.swift in Sources */,
 				54A0AFB794DA461F6815FBA7 /* TrackEditorView.swift in Sources */,
+				28DEA93E0A3FAFF1824D6CE5 /* WebDAVFileProvider.swift in Sources */,
 				7E865189E89A8F68DAC6F71D /* WelcomeIllustration.swift in Sources */,
 				915A7C30E0E2C6A8E21EB6CE /* WelcomeView.swift in Sources */,
+				A53B5DA447372197C0886D97 /* WiFiImportService.swift in Sources */,
+				4374CA56F7AD382973CF39D9 /* WiFiImportView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1470,12 +1557,17 @@
 				E1D95449B76F80799F25EE5C /* AppleMusicMetadataTests.swift in Sources */,
 				8A80417D5A9AEDFF15A4AA50 /* ArtworkFlowTests.swift in Sources */,
 				EAB69EBD857E0943301D76C5 /* AudioFileStoreTests.swift in Sources */,
+				F65342C3177B9FAA78AA777D /* AudioMetadataBackupTests.swift in Sources */,
+				56554F31825228275DDDE5D2 /* ConnectionDownloadTests.swift in Sources */,
 				90189E0BD1E87E985E1C0225 /* CoverArtServiceTests.swift in Sources */,
 				8C927EAD8FBC778AA0D9B425 /* LibraryFlowTests.swift in Sources */,
 				E42805FE005B783CE55F5851 /* MusicRecognitionTests.swift in Sources */,
+				F2CF319C2D6C86253D20F0EE /* MusicServerConnectionTests.swift in Sources */,
 				F7369280A063F1715E86E7BB /* NativeAudioTests.swift in Sources */,
+				A564DF2FA2A050AA99DD7175 /* RemoteFileProviderTests.swift in Sources */,
 				46F88EEA3F965D56C86C5265 /* ShazamFlowTests.swift in Sources */,
 				C1567D84D206A1CA78832837 /* ShazamRecognitionTests.swift in Sources */,
+				37BBD0E3A8B004A046A7A3BD /* WiFiImportTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1892,6 +1984,20 @@
 			defaultConfigurationName = Debug;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		F5ED552CF7628C8EFED1AF3B /* XCLocalSwiftPackageReference "Vendor/SMBClient" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Vendor/SMBClient;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		7CB52D7B27934C2AD5A05AB1 /* SMBClient */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = SMBClient;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 943441884F65A8391D9D9F3A /* Project object */;
 }

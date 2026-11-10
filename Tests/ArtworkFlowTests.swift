@@ -37,6 +37,7 @@ final class ArtworkFlowTests: XCTestCase {
         XCTAssertTrue(result.hasArtworkChanges)
         XCTAssertNil(context.model.notice)
         XCTAssertEqual(try Data(contentsOf: context.source), context.originalBytes)
+        XCTAssertEqual(try Data(contentsOf: context.document.url), context.originalBytes)
         let backups = try FileManager.default.contentsOfDirectory(atPath: context.root.appendingPathComponent("State/Backups").path)
         XCTAssertTrue(backups.isEmpty, "Selecting a release must not create a saved-file backup")
     }
@@ -74,6 +75,7 @@ final class ArtworkFlowTests: XCTestCase {
             XCTAssertFalse(result.hasArtworkChanges)
             XCTAssertNotNil(context.model.notice)
             XCTAssertEqual(try Data(contentsOf: context.source), context.originalBytes)
+            XCTAssertEqual(try Data(contentsOf: context.document.url), context.originalBytes)
         }
     }
 
@@ -99,6 +101,7 @@ final class ArtworkFlowTests: XCTestCase {
         XCTAssertFalse(result.hasArtworkChanges)
         XCTAssertEqual(result.draft.album, "Album B")
         XCTAssertEqual(try Data(contentsOf: context.source), context.originalBytes)
+        XCTAssertEqual(try Data(contentsOf: context.document.url), context.originalBytes)
     }
 
     @MainActor
@@ -129,6 +132,7 @@ final class ArtworkFlowTests: XCTestCase {
         XCTAssertEqual(result.draftArtwork, previous.draftArtwork)
         XCTAssertEqual(result.originalArtwork, originalCover)
         XCTAssertEqual(try Data(contentsOf: context.source), context.originalBytes)
+        XCTAssertEqual(try Data(contentsOf: context.document.url), context.originalBytes)
     }
 
     @MainActor
@@ -158,6 +162,7 @@ final class ArtworkFlowTests: XCTestCase {
         XCTAssertEqual(discarded.draftArtwork, originalCover)
         XCTAssertFalse(discarded.hasChanges)
         XCTAssertEqual(try Data(contentsOf: context.source), context.originalBytes)
+        XCTAssertEqual(try Data(contentsOf: context.document.url), context.originalBytes)
     }
 
     private func candidate(_ id: String) -> MetadataCandidate {
@@ -474,6 +479,11 @@ final class BatchMatchingFlowTests: XCTestCase {
     private func assertSourcesUnchanged(_ context: Context, file: StaticString = #filePath, line: UInt = #line) async throws {
         for (url, bytes) in context.originalBytes {
             XCTAssertEqual(try Data(contentsOf: url), bytes, file: file, line: line)
+        }
+        for document in context.model.documents {
+            let source = try XCTUnwrap(document.sourceURL, file: file, line: line)
+            let bytes = try XCTUnwrap(context.originalBytes[source], file: file, line: line)
+            XCTAssertEqual(try Data(contentsOf: document.url), bytes, file: file, line: line)
         }
         let backups = try await context.store.backups()
         XCTAssertTrue(backups.isEmpty, "Auto matching must not save files or create backups", file: file, line: line)

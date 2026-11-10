@@ -5,6 +5,9 @@ outputs/*
 !outputs/02-editor-ios18.png
 !outputs/03-review-ios18.png
 !outputs/04-cover-review-ios18.png
+!outputs/05-connections-ios18.png
+!outputs/06-wifi-transfer-ios18.png
+!outputs/07-local-music-files-ios18.png
 !outputs/VALIDATION.md
 DerivedData/
 *.xcuserstate

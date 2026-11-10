@@ -66,21 +66,142 @@ final class NativeAudioTests: XCTestCase {
             let store = AudioFileStore(codec: codec, storageDirectory: state)
             let imported = try await store.importFiles(from: [copy])
             var document = try XCTUnwrap(imported.documents.first, imported.failures.joined(separator: "; "))
+            let local = document.url
             XCTAssertEqual(document.originalArtwork, originalArtwork, ext)
             document.draftArtwork = replacement
             XCTAssertTrue(document.hasChanges, ext)
             let (saved, backup) = try await store.save(document)
             XCTAssertFalse(saved.hasChanges, ext)
             XCTAssertEqual(saved.originalArtwork, replacement, ext)
-            XCTAssertEqual(try codec.read(from: copy).artwork, replacement, ext)
-            XCTAssertEqual(try NativeAudio.payloadHash(url: copy), payload, ext)
-            XCTAssertEqual(try Data(contentsOf: backup.backupURL), originalBytes, ext)
+            XCTAssertEqual(try codec.read(from: local).artwork, replacement, ext)
+            XCTAssertEqual(try NativeAudio.payloadHash(url: local), payload, ext)
+            try assertMetadataOnlyBackup(backup, original: originalBytes, audioURL: local)
             let restored = try await store.restore(backup)
             XCTAssertEqual(restored.originalArtwork, originalArtwork, ext)
             XCTAssertEqual(restored.draftArtwork, originalArtwork, ext)
             XCTAssertFalse(restored.hasChanges, ext)
-            XCTAssertEqual(try Data(contentsOf: copy), originalBytes, ext)
+            XCTAssertEqual(try Data(contentsOf: copy), originalBytes)
+            XCTAssertEqual(try Data(contentsOf: local), originalBytes, ext)
         }
+    }
+
+    func testAddingFirstCoverThenUndoRemovesItInEveryFormat() async throws {
+        let cover = try artwork(color: .orange, jpeg: false)
+        for ext in ["mp3", "flac", "m4a"] {
+            let copy = try audioCopy(ext)
+            let state = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            defer {
+                try? FileManager.default.removeItem(at: copy)
+                try? FileManager.default.removeItem(at: state)
+            }
+            if ext == "flac" { try removeFLACPictures(from: copy) }
+            let original = try Data(contentsOf: copy)
+            let codec = NativeMetadataCodec()
+            XCTAssertNil(try codec.read(from: copy).artwork, "The fixture must start without cover art: \(ext)")
+            let store = AudioFileStore(codec: codec, storageDirectory: state)
+            let imported = try await store.importFiles(from: [copy])
+            var document = try XCTUnwrap(imported.documents.first)
+            let local = document.url
+            document.draftArtwork = cover
+            let (_, backup) = try await store.save(document)
+            XCTAssertEqual(try codec.read(from: local).artwork, cover, ext)
+            let restored = try await store.restore(backup)
+            XCTAssertNil(restored.originalArtwork, ext)
+            XCTAssertNil(try codec.read(from: local).artwork, ext)
+            XCTAssertEqual(try Data(contentsOf: copy), original)
+            XCTAssertEqual(try Data(contentsOf: local), original, ext)
+        }
+    }
+
+    func testMetadataBackupsRestoreMultipleSavesInReverseOrderInEveryFormat() async throws {
+        let firstCover = try artwork(color: .red, jpeg: false)
+        let secondCover = try artwork(color: .blue, jpeg: true)
+        for ext in ["mp3", "flac", "m4a"] {
+            let copy = try audioCopy(ext)
+            let state = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            defer {
+                try? FileManager.default.removeItem(at: copy)
+                try? FileManager.default.removeItem(at: state)
+            }
+            let original = try Data(contentsOf: copy)
+            let originalPayload = try NativeAudio.payloadHash(url: copy)
+            let store = AudioFileStore(codec: NativeMetadataCodec(), storageDirectory: state)
+            let imported = try await store.importFiles(from: [copy])
+            var firstEdit = try XCTUnwrap(imported.documents.first)
+            let local = firstEdit.url
+            firstEdit.draft.title = "First saved title"
+            firstEdit.draftArtwork = firstCover
+            let (first, firstBackup) = try await store.save(firstEdit)
+            let firstBytes = try Data(contentsOf: local)
+            var secondEdit = first
+            secondEdit.draft.title = "Second saved title"
+            secondEdit.draft.artist = "Second saved artist"
+            secondEdit.draftArtwork = secondCover
+            let (_, secondBackup) = try await store.save(secondEdit)
+            let secondBytes = try Data(contentsOf: local)
+            do {
+                _ = try await store.restore(firstBackup)
+                XCTFail("An older metadata snapshot must not overwrite newer edits: \(ext)")
+            } catch { }
+            XCTAssertEqual(try Data(contentsOf: local), secondBytes, ext)
+
+            let relaunched = AudioFileStore(codec: NativeMetadataCodec(), storageDirectory: state)
+            _ = try await relaunched.restore(secondBackup)
+            XCTAssertEqual(try Data(contentsOf: local), firstBytes, ext)
+            _ = try await relaunched.restore(firstBackup)
+            XCTAssertEqual(try Data(contentsOf: local), original, ext)
+            XCTAssertEqual(try Data(contentsOf: copy), original)
+            XCTAssertEqual(try NativeAudio.payloadHash(url: local), originalPayload, ext)
+        }
+    }
+
+    func testMP3MetadataUndoRestoresMultipleCoversMultivalueAndUnknownFramesExactly() async throws {
+        let copy = try audioCopy("mp3")
+        let state = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer {
+            try? FileManager.default.removeItem(at: copy)
+            try? FileManager.default.removeItem(at: state)
+        }
+        var audio = try Data(contentsOf: copy)
+        if audio.starts(with: Data("ID3".utf8)), audio.count >= 10 {
+            let size = audio[6..<10].reduce(0) { ($0 << 7) | Int($1) }
+            audio.removeFirst(10 + size + (audio[5] & 0x10 != 0 ? 10 : 0))
+        }
+        func frame(_ name: String, _ body: Data) -> Data {
+            Data(name.utf8) + syncSafe(body.count) + Data([0, 0]) + body
+        }
+        func picture(_ artwork: AudioArtwork, type: UInt8) -> Data {
+            frame("APIC", Data([0]) + Data(artwork.mimeType.utf8) + Data([0, type, 0]) + artwork.data)
+        }
+        let front = try artwork(color: .red, jpeg: false)
+        let back = try artwork(color: .green, jpeg: false)
+        let replacement = try artwork(color: .blue, jpeg: true)
+        let unknown = frame("ZZZZ", Data("private untouched metadata".utf8))
+        let artists = frame("TPE1", Data([3]) + Data("First Artist\0Second Artist".utf8))
+        let frames = picture(front, type: 3) + picture(back, type: 4) + unknown + artists
+        let original = Data([73, 68, 51, 4, 0, 0]) + syncSafe(frames.count) + frames + audio
+        try original.write(to: copy)
+        let originalPayload = try NativeAudio.payloadHash(url: copy)
+        let store = AudioFileStore(codec: NativeMetadataCodec(), storageDirectory: state)
+        let imported = try await store.importFiles(from: [copy])
+        var document = try XCTUnwrap(imported.documents.first, imported.failures.joined(separator: "; "))
+        let local = document.url
+        XCTAssertEqual(document.originalArtwork, front)
+        XCTAssertTrue(document.original.artist.contains("First Artist"))
+        XCTAssertTrue(document.original.artist.contains("Second Artist"))
+        document.draft.title = "New title"
+        document.draft.artist = "Replacement artist"
+        document.draftArtwork = replacement
+        let (_, backup) = try await store.save(document)
+        let backupData = try Data(contentsOf: backup.backupURL)
+        XCTAssertNotNil(backupData.range(of: front.data))
+        XCTAssertNotNil(backupData.range(of: back.data))
+        XCTAssertNotNil(backupData.range(of: unknown))
+        XCTAssertNotNil(backupData.range(of: artists))
+        XCTAssertEqual(try NativeAudio.payloadHash(url: local), originalPayload)
+        _ = try await store.restore(backup)
+        XCTAssertEqual(try Data(contentsOf: copy), original)
+        XCTAssertEqual(try Data(contentsOf: local), original)
     }
 
     func testMP3CoverReplacementPreservesBackCoverAndPrefersFront() throws {
@@ -211,6 +332,48 @@ final class NativeAudioTests: XCTestCase {
         let copy = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + "." + ext)
         try FileManager.default.copyItem(at: source, to: copy)
         return copy
+    }
+
+    /// The bundled FLAC has a picture; remove it only from this test's copy.
+    private func removeFLACPictures(from url: URL) throws {
+        let data = try Data(contentsOf: url)
+        var offset = try XCTUnwrap(data.starts(with: Data("fLaC".utf8)) ? 4 : nil)
+        var blocks: [Data] = []
+        var isLast = false
+        while !isLast {
+            let header = try XCTUnwrap(offset + 4 <= data.count ? data.subdata(in: offset..<(offset + 4)) : nil)
+            isLast = header[0] & 0x80 != 0
+            let length = header[1...3].reduce(0) { ($0 << 8) | Int($1) }
+            let end = offset + 4 + length
+            var block = try XCTUnwrap(end <= data.count ? data.subdata(in: offset..<end) : nil)
+            if header[0] & 0x7f != 6 {
+                block[0] &= 0x7f
+                blocks.append(block)
+            }
+            offset = end
+        }
+        let lastIndex = try XCTUnwrap(blocks.indices.last)
+        blocks[lastIndex][0] |= 0x80
+        var result = Data("fLaC".utf8)
+        for block in blocks { result.append(block) }
+        result.append(data.suffix(from: offset))
+        try result.write(to: url)
+    }
+
+    private func assertMetadataOnlyBackup(_ backup: BackupRecord, original: Data, audioURL: URL,
+                                          file: StaticString = #filePath, line: UInt = #line) throws {
+        XCTAssertNotNil(backup.backupHash, file: file, line: line)
+        XCTAssertEqual(backup.backupURL.pathExtension, "mustagbackup", file: file, line: line)
+        let data = try Data(contentsOf: backup.backupURL)
+        let archive = try AudioMetadataBackup(data: data)
+        XCTAssertEqual(archive.originalFileSize, UInt64(original.count), file: file, line: line)
+        XCTAssertLessThan(data.count, original.count, file: file, line: line)
+        let current = try Data(contentsOf: audioURL)
+        let ranges = try NativeAudio.payloadRanges(url: audioURL)
+        for range in ranges {
+            let audio = current.subdata(in: Int(range.offset)..<Int(range.offset + range.length))
+            XCTAssertNil(data.range(of: audio), "The persisted archive must omit the encoded audio", file: file, line: line)
+        }
     }
 
     private func artwork(color: UIColor, jpeg: Bool) throws -> AudioArtwork {

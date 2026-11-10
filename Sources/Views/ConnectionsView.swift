@@ -2,163 +2,307 @@ import SwiftUI
 
 struct ConnectionsView: View {
     @EnvironmentObject private var model: AppModel
+    @StateObject private var store = ConnectionStore()
+    @StateObject private var downloads = ConnectionDownloads()
     @State private var picker: AudioPickerMode?
+    @State private var editing: RemoteConnection?
+    @State private var removing: RemoteConnection?
 
     var body: some View {
         NavigationStack {
             List {
                 Section {
-                    importButton(
-                        L10n.text("Files", "文件"),
-                        subtitle: L10n.text("Choose one or more audio files", "选择一个或多个音频文件"),
-                        systemImage: "doc.fill", color: .blue, mode: .files,
-                        identifier: "connectionFilesButton")
-                    importButton(
-                        L10n.text("Folder", "文件夹"),
-                        subtitle: L10n.text("Import music from a folder", "导入文件夹中的音乐"),
-                        systemImage: "folder.fill", color: .orange, mode: .folder,
-                        identifier: "connectionFolderButton")
-                } header: {
-                    Text(L10n.text("Local", "本地"))
-                } footer: {
-                    Text(L10n.text("Imported music appears on Home.", "导入的音乐会显示在首页。"))
-                }
-
-                Section(L10n.text("NAS & Servers", "NAS & 服务器")) {
-                    ForEach(ConnectionService.allCases) { service in
-                        NavigationLink {
-                            ConnectionServiceView(service: service)
-                        } label: {
-                            connectionLabel(service.title, subtitle: service.summary,
-                                            systemImage: service.systemImage, color: service.color)
+                    importButton(.files, title: L10n.text("Import files", "导入文件"), icon: "doc.fill")
+                    importButton(.folder, title: L10n.text("Import folder", "导入文件夹"), icon: "folder.fill")
+                    NavigationLink { WiFiImportView() } label: {
+                        Label(L10n.text("Wi-Fi Transfer", "WiFi 传歌"), systemImage: "wifi")
+                    }.accessibilityIdentifier("connectionWiFiButton")
+                    NavigationLink { LocalMusicFilesView() } label: {
+                        Label(L10n.text("Local music folder", "本机音乐文件夹"), systemImage: "internaldrive")
+                    }
+                } header: { Text(L10n.text("Local", "本地")) }
+                footer: { Text(L10n.text("Files are copied to this device before editing. Find saved music in Files → On My iPhone/iPad → MusTag → Music.", "所有文件先复制到本机再编辑。保存后的音乐位于“文件”→“我的 iPhone/iPad”→ MusTag → Music。")) }
+                if !store.connections.isEmpty {
+                    Section(L10n.text("Saved connections", "已保存的连接")) {
+                        ForEach(store.connections) { connection in
+                            NavigationLink { RemoteBrowserView(connection: connection, downloads: downloads) } label: {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(connection.name)
+                                    Text(connection.kind.title + " · " + connection.address).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                }
+                            }
+                            .swipeActions {
+                                Button(L10n.text("Remove", "移除"), role: .destructive) { removing = connection }
+                                Button(L10n.text("Edit", "编辑")) { editing = connection }.tint(.blue)
+                            }
+                            .contextMenu {
+                                Button(L10n.text("Edit connection", "编辑连接")) { editing = connection }
+                                Button(L10n.text("Remove connection", "移除连接"), role: .destructive) { removing = connection }
+                            }
+                            .disabled(downloads.isRunning)
                         }
-                        .accessibilityIdentifier("connectionService_\(service.rawValue)")
                     }
                 }
-
-                Section {
-                    importButton(
-                        L10n.text("Browse cloud storage", "浏览网盘"),
-                        subtitle: L10n.text("iCloud Drive and locations added to Files", "iCloud Drive 及已添加到“文件”的网盘"),
-                        systemImage: "icloud.fill", color: .cyan, mode: .files,
-                        identifier: "connectionCloudButton")
-                } header: {
-                    Text(L10n.text("Cloud storage", "网盘"))
-                } footer: {
-                    Text(L10n.text("Choose a cloud location in the Files browser to import audio.",
-                                   "在系统“文件”的浏览页面中选择网盘位置，即可导入音频。"))
+                Section(L10n.text("Add NAS or server", "添加 NAS 或服务器")) {
+                    ForEach(ConnectionKind.allCases) { kind in
+                        Button { editing = RemoteConnection(kind: kind, name: kind.title, address: "", username: "") } label: {
+                            Label(kind.title, systemImage: kind.isMusicServer ? "music.note.house" : "server.rack")
+                        }.accessibilityIdentifier("connectionService_\(kind.rawValue)").disabled(downloads.isRunning)
+                    }
                 }
+                if downloads.isRunning || downloads.summary != nil {
+                    Section(L10n.text("Downloads", "下载")) { DownloadStatusView(downloads: downloads) }
+                }
+                if let error = store.error { Text(error).foregroundStyle(.red).font(.footnote) }
             }
-            .listStyle(.insetGrouped)
             .navigationTitle(L10n.text("Connections", "连接"))
-            .navigationBarTitleDisplayMode(.large)
-            .safeAreaInset(edge: .bottom) {
-                if model.isWorking { OperationFooter() }
-            }
             .sheet(item: $picker) { mode in
-                AudioDocumentPicker(mode: mode, onPick: { urls in
-                    model.importFiles(urls)
-                    picker = nil
-                }, onCancel: { picker = nil })
+                AudioDocumentPicker(mode: mode, onPick: { urls in model.importFiles(urls); picker = nil }, onCancel: { picker = nil })
             }
+            .sheet(item: $editing) { ConnectionEditorView(connection: $0, store: store) }
+            .confirmationDialog(L10n.text("Remove this connection?", "移除此连接？"), isPresented: Binding(
+                get: { removing != nil }, set: { if !$0 { removing = nil } }
+            ), titleVisibility: .visible, presenting: removing) { connection in
+                Button(L10n.text("Remove connection", "移除连接"), role: .destructive) {
+                    do { try store.remove(connection) } catch { store.error = error.localizedDescription }
+                }
+            } message: { _ in Text(L10n.text("Downloaded files and local edits will be kept.", "已下载的文件和本地修改会保留。")) }
         }
     }
 
-    private func importButton(_ title: String, subtitle: String, systemImage: String,
-                              color: Color, mode: AudioPickerMode, identifier: String) -> some View {
-        Button { picker = mode } label: {
-            HStack(spacing: 12) {
-                connectionLabel(title, subtitle: subtitle, systemImage: systemImage, color: color)
-                Spacer(minLength: 0)
-                Image(systemName: "chevron.right")
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(.tertiary)
-                    .accessibilityHidden(true)
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .disabled(model.isWorking)
-        .accessibilityIdentifier(identifier)
-    }
-
-    private func connectionLabel(_ title: String, subtitle: String,
-                                 systemImage: String, color: Color) -> some View {
-        HStack(spacing: 14) {
-            Image(systemName: systemImage)
-                .font(.title3)
-                .foregroundStyle(color)
-                .frame(width: 42, height: 42)
-                .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.body.weight(.medium))
-                    .foregroundStyle(.primary)
-                Text(subtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .padding(.vertical, 5)
+    private func importButton(_ mode: AudioPickerMode, title: String, icon: String) -> some View {
+        Button { picker = mode } label: { Label(title, systemImage: icon) }
+            .disabled(model.isWorking)
+            .accessibilityIdentifier(mode == .files ? "connectionFilesButton" : "connectionFolderButton")
     }
 }
 
-private enum ConnectionService: String, CaseIterable, Identifiable {
-    case smb, ftp, webDAV, navidrome
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .smb: "SMB"
-        case .ftp: "FTP"
-        case .webDAV: "WebDAV"
-        case .navidrome: "Navidrome"
-        }
-    }
-
-    var summary: String {
-        switch self {
-        case .smb: L10n.text("Shared folders on your local network", "局域网共享文件夹")
-        case .ftp: L10n.text("Files on an FTP server", "FTP 服务器文件")
-        case .webDAV: L10n.text("Remote folders over WebDAV", "WebDAV 远程文件夹")
-        case .navidrome: L10n.text("Your personal music server", "个人音乐服务器")
-        }
-    }
-
-    var systemImage: String {
-        switch self {
-        case .smb: "externaldrive.connected.to.line.below"
-        case .ftp: "server.rack"
-        case .webDAV: "network"
-        case .navidrome: "music.note.house.fill"
-        }
-    }
-
-    var color: Color {
-        switch self {
-        case .smb: .green
-        case .ftp: .orange
-        case .webDAV: .blue
-        case .navidrome: .purple
-        }
-    }
-}
-
-private struct ConnectionServiceView: View {
-    let service: ConnectionService
+private struct ConnectionEditorView: View {
+    @Environment(\.dismiss) private var dismiss
+    @State var connection: RemoteConnection
+    @ObservedObject var store: ConnectionStore
+    @State private var password = ""
+    @State private var error: String?
+    @State private var checking = false
+    @State private var task: Task<Void, Never>?
 
     var body: some View {
-        ContentUnavailableView {
-            Label(service.title, systemImage: service.systemImage)
-        } description: {
-            Text(service.summary)
-            Text(L10n.text("Connections are not available yet.", "连接功能暂未开放。"))
+        NavigationStack {
+            Form {
+                Section {
+                    TextField(L10n.text("Name", "名称"), text: $connection.name)
+                    TextField(addressHint, text: $connection.address)
+                        .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
+                        .accessibilityIdentifier("connectionAddressField")
+                    TextField(L10n.text("Username", "用户名"), text: $connection.username).textInputAutocapitalization(.never).autocorrectionDisabled()
+                    SecureField(L10n.text("Password", "密码"), text: $password)
+                    if !connection.kind.isMusicServer {
+                        TextField(L10n.text("Starting folder (optional)", "起始文件夹（可选）"), text: $connection.rootPath)
+                            .textInputAutocapitalization(.never).autocorrectionDisabled()
+                    }
+                    if connection.kind == .smb {
+                        TextField(L10n.text("Domain (optional)", "域（可选）"), text: $connection.domain)
+                            .textInputAutocapitalization(.never).autocorrectionDisabled()
+                    }
+                } footer: { Text(L10n.text("Only browsing and downloading are supported. Server files remain unchanged.", "连接仅用于浏览和下载，服务器文件不会被修改。")) }
+                if connection.kind != .smb {
+                    Section {
+                        Toggle(L10n.text("Allow unencrypted connection", "允许未加密连接"), isOn: $connection.allowsInsecureConnection)
+                    } footer: {
+                        Text(connection.kind == .ftp
+                             ? L10n.text("Supports ftp:// only. Account and file transfers are unencrypted. Enable only on a trusted network.", "支持 ftp://，账号与文件传输不加密。请仅在信任的网络中启用。")
+                             : L10n.text("HTTPS is recommended. Enable only if your trusted server uses http://.", "建议使用 HTTPS。仅当信任的服务器使用 http:// 时启用。"))
+                    }
+                }
+                if let error { Text(error).foregroundStyle(.red) }
+                if checking { ProgressView(L10n.text("Checking connection…", "正在检查连接…")) }
+            }
+            .disabled(checking)
+            .navigationTitle(connection.kind.title).navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(L10n.text("Cancel", "取消")) { task?.cancel(); dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(L10n.text("Connect", "连接")) { connect() }
+                        .disabled(checking || connection.address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .accessibilityIdentifier("saveConnectionButton")
+                }
+            }
+            .onAppear {
+                if store.connections.contains(where: { $0.id == connection.id }) {
+                    do { password = try ConnectionPasswordStore.password(for: connection.id) }
+                    catch { self.error = error.localizedDescription }
+                }
+            }
+            .onDisappear { task?.cancel() }
         }
-        .navigationTitle(service.title)
-        .navigationBarTitleDisplayMode(.inline)
-        .accessibilityIdentifier("connectionServiceDetail_\(service.rawValue)")
+    }
+
+    private var addressHint: String {
+        switch connection.kind {
+        case .smb: "smb://192.168.1.10/Music"
+        case .ftp: "ftp://192.168.1.10:21"
+        case .feiniu: "http://192.168.1.10:5666"
+        default: "https://music.example.com"
+        }
+    }
+
+    private func connect() {
+        checking = true; error = nil
+        connection.address = connection.address.trimmingCharacters(in: .whitespacesAndNewlines)
+        connection.name = connection.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if connection.name.isEmpty { connection.name = connection.kind.title }
+        task = Task {
+            defer { checking = false }
+            do {
+                let provider = try ConnectionProviderFactory.make(connection, password: password)
+                do { _ = try await provider.listDirectory(path: "/") }
+                catch { await provider.disconnect(); throw error }
+                await provider.disconnect()
+                try Task.checkCancellation()
+                try store.save(connection, password: password)
+                dismiss()
+            } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+        }
+    }
+}
+
+private struct RemoteBrowserView: View {
+    @EnvironmentObject private var model: AppModel
+    let connection: RemoteConnection
+    @ObservedObject var downloads: ConnectionDownloads
+    var path = "/"
+    var parentNames: [String] = []
+    @State var provider: (any RemoteFileProvider)?
+    @State private var entries: [RemoteFile] = []
+    @State private var selected: Set<String> = []
+    @State private var loading = true
+    @State private var error: String?
+
+    var body: some View {
+        List {
+            Section {
+                Text(L10n.text("Select files or folders to download. Only local copies will be edited.", "选择文件或文件夹下载，之后仅编辑本机副本。"))
+                    .font(.footnote).foregroundStyle(.secondary)
+                if loading { ProgressView(L10n.text("Loading…", "正在读取…")) }
+                if let error {
+                    Text(error).foregroundStyle(.red)
+                    Button(L10n.text("Retry", "重试")) { Task { await load() } }
+                }
+                if !loading && error == nil && entries.isEmpty { Text(L10n.text("This folder is empty.", "此文件夹为空。")) }
+            }
+            Section {
+                ForEach(entries) { file in
+                    HStack(spacing: 12) {
+                        Button { toggle(file) } label: {
+                            Image(systemName: selected.contains(file.id) ? "checkmark.circle.fill" : "circle").font(.title3).frame(width: 28, height: 32)
+                        }.buttonStyle(.plain)
+                            .accessibilityLabel(L10n.text("Select ", "选择 ") + file.name)
+                            .disabled(!selectable(file) || downloads.isRunning)
+                        if file.isDirectory, let provider, file.unavailableReason == nil {
+                            NavigationLink {
+                                RemoteBrowserView(connection: connection, downloads: downloads, path: file.id,
+                                                  parentNames: parentNames + [file.name], provider: provider)
+                            } label: { entryLabel(file) }
+                        } else { entryLabel(file).onTapGesture { if !downloads.isRunning { toggle(file) } } }
+                    }
+                }
+            }
+            if downloads.isRunning || downloads.summary != nil { Section { DownloadStatusView(downloads: downloads) } }
+        }
+        .navigationTitle(parentNames.last ?? connection.name).navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button(L10n.text("Select all", "全选")) { selected = Set(entries.filter(selectable).map(\.id)) }
+                    .disabled(loading || downloads.isRunning)
+            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            Button {
+                guard let provider else { return }
+                downloads.start(connection: connection, provider: provider,
+                                entries: entries.filter { selected.contains($0.id) }, parentNames: parentNames)
+            } label: {
+                Label(L10n.text("Download selected (\(selected.count))", "下载所选（\(selected.count)）"), systemImage: "arrow.down.circle.fill")
+                    .frame(maxWidth: .infinity).padding(.vertical, 7)
+            }.buttonStyle(.borderedProminent).padding().background(.bar)
+                .disabled(selected.isEmpty || loading || downloads.isRunning || model.isWorking)
+                .accessibilityIdentifier("downloadSelectedButton")
+        }
+        .task { await load() }
+        .refreshable { if !downloads.isRunning { await load() } }
+    }
+
+    private func selectable(_ file: RemoteFile) -> Bool { file.unavailableReason == nil && (file.isDirectory || file.isSupportedAudio) }
+    private func toggle(_ file: RemoteFile) {
+        guard selectable(file) else { return }
+        if selected.contains(file.id) { selected.remove(file.id) } else { selected.insert(file.id) }
+    }
+    private func entryLabel(_ file: RemoteFile) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: file.isDirectory ? "folder.fill" : "music.note").foregroundStyle(file.isDirectory ? Color.orange : Color.indigo)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(file.name).foregroundStyle(.primary).lineLimit(2)
+                if let reason = file.unavailableReason { Text(reason).font(.caption).foregroundStyle(.secondary) }
+                else if !file.isDirectory && !file.isSupportedAudio {
+                    Text(L10n.text("Supports MP3, FLAC and M4A", "支持 MP3、FLAC、M4A")).font(.caption).foregroundStyle(.secondary)
+                } else if let size = file.size {
+                    Text(ByteCountFormatter.string(fromByteCount: size, countStyle: .file)).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+    }
+    private func load() async {
+        loading = true; error = nil
+        defer { loading = false }
+        do {
+            if provider == nil { provider = try ConnectionProviderFactory.make(connection, password: ConnectionPasswordStore.password(for: connection.id)) }
+            guard let provider else { return }
+            let result = try await provider.listDirectory(path: path)
+            try Task.checkCancellation()
+            entries = result.sorted {
+                if $0.isDirectory != $1.isDirectory { return $0.isDirectory }
+                return $0.name.localizedStandardCompare($1.name) == .orderedAscending
+            }
+            selected.formIntersection(Set(entries.filter(selectable).map(\.id)))
+        } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+    }
+}
+
+private struct DownloadStatusView: View {
+    @ObservedObject var downloads: ConnectionDownloads
+    var body: some View {
+        if downloads.isRunning {
+            Text(downloads.isScanning ? L10n.text("Scanning folders…", "正在扫描文件夹…") : "\(downloads.completed) / \(downloads.total)")
+            Text(downloads.currentName).font(.caption).lineLimit(2)
+            if let expected = downloads.expectedBytes, expected > 0, !downloads.isScanning {
+                ProgressView(value: min(Double(downloads.receivedBytes), Double(expected)), total: Double(expected))
+            } else { ProgressView() }
+            Button(L10n.text("Cancel download", "取消下载"), role: .cancel) { downloads.cancel() }
+        }
+        if let summary = downloads.summary { Text(summary).font(.footnote).foregroundStyle(.secondary) }
+        ForEach(Array(downloads.failures.prefix(20).enumerated()), id: \.offset) { _, failure in
+            Text(failure).font(.caption).foregroundStyle(.red)
+        }
+    }
+}
+
+struct LocalMusicFilesView: View {
+    @EnvironmentObject private var model: AppModel
+    var body: some View {
+        List {
+            Section {
+                Label(L10n.text("Files → On My iPhone/iPad → MusTag → Music", "文件 → 我的 iPhone/iPad → MusTag → Music"), systemImage: "folder.fill")
+                Text(L10n.text("Imported and downloaded music stays in this folder. Edits are saved here. Copy or share the audio using Files.", "导入和下载的音乐保存在此文件夹，编辑结果也保存在这里。你可以使用“文件”App 复制或分享音频。"))
+                    .font(.subheadline).foregroundStyle(.secondary)
+                Button(L10n.text("Refresh local files", "刷新本地文件")) { model.enqueueLocalImports([model.localLibraryDirectory]) }
+                    .disabled(model.isWorking).accessibilityIdentifier("refreshLocalFilesButton")
+            }
+            Section {
+                Text(L10n.text("Removing a song from MusTag's list keeps the audio file. To free device storage, delete files in Files. Metadata backups cannot recover deleted audio.", "从 MusTag 列表移除歌曲会保留音频文件。如需释放空间，请在“文件”App 中删除文件。元数据备份无法找回已删除的音频。"))
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+        }.navigationTitle(L10n.text("Local files", "本地文件")).navigationBarTitleDisplayMode(.inline)
     }
 }

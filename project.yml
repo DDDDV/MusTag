@@ -81,13 +81,17 @@ targets:
         UISupportsDocumentBrowser: true
         LSSupportsOpeningDocumentsInPlace: true
         UIFileSharingEnabled: true
-        NSLocalNetworkUsageDescription: Access audio files you select on your NAS.
+        NSLocalNetworkUsageDescription: Browse and download music from your NAS or receive files over Wi-Fi. 浏览并下载 NAS 音乐，或通过 WiFi 接收文件。
+        NSBonjourServices: ["_http._tcp"]
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
         NSAppleMusicUsageDescription: Use Apple Music to look up album, release year, track and disc details for songs recognized by Shazam. 使用 Apple Music 补全 Shazam 识别歌曲的专辑、年份、曲序和碟号。
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         "UISupportedInterfaceOrientations~ipad": [UIInterfaceOrientationPortrait, UIInterfaceOrientationPortraitUpsideDown, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
     dependencies:
       - target: TagLib
       - target: Chromaprint
+      - package: SMBClient
       - sdk: Accelerate.framework
       - sdk: AVFoundation.framework
       - sdk: ShazamKit.framework
@@ -119,6 +123,9 @@ targets:
       base:
         GENERATE_INFOPLIST_FILE: YES
         PRODUCT_BUNDLE_IDENTIFIER: app.mustag.personal.uitests
+packages:
+  SMBClient:
+    path: Vendor/SMBClient
 schemes:
   MusTag:
     build:

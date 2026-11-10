@@ -53,6 +53,10 @@ struct AudioDocument: Identifiable, Codable, Sendable {
     var importFolderIDs: Set<String>? = nil
     var originalShazamAttribution: ShazamAttribution? = nil
     var draftShazamAttribution: ShazamAttribution? = nil
+    /// Import provenance only. Saving always targets the owned local copy in `url`.
+    var sourceURL: URL? = nil
+    /// Relative to Documents/Music, so an app container relocation keeps files usable.
+    var libraryRelativePath: String? = nil
     var fileName: String { url.lastPathComponent }
     var hasArtworkChanges: Bool { originalArtwork != draftArtwork }
     var hasChanges: Bool { original != draft || hasArtworkChanges }
@@ -69,7 +73,10 @@ struct AudioDocument: Identifiable, Codable, Sendable {
 
 struct AudioFolder: Identifiable, Codable, Hashable, Sendable {
     var url: URL
-    var id: String { url.standardizedFileURL.absoluteString }
+    var sourceURL: URL? = nil
+    var libraryRelativePath: String? = nil
+    var persistentID: String? = nil
+    var id: String { persistentID ?? (sourceURL ?? url).standardizedFileURL.absoluteString }
     var name: String { url.lastPathComponent }
 }
 
@@ -132,6 +139,10 @@ struct BackupRecord: Identifiable, Codable, Sendable {
     var writtenHash: String
     var restored = false
     var originalShazamAttribution: ShazamAttribution? = nil
+    // Absent in legacy journals, whose backup is a complete audio file.
+    // New archives contain only metadata and have their own integrity hash.
+    var backupHash: String? = nil
+    var libraryRelativePath: String? = nil
 }
 
 struct ImportResult: Sendable {

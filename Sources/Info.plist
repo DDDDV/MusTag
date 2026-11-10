@@ -24,10 +24,19 @@
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
-	<key>NSLocalNetworkUsageDescription</key>
-	<string>Access audio files you select on your NAS.</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
 	<key>NSAppleMusicUsageDescription</key>
 	<string>Use Apple Music to look up album, release year, track and disc details for songs recognized by Shazam. 使用 Apple Music 补全 Shazam 识别歌曲的专辑、年份、曲序和碟号。</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_http._tcp</string>
+	</array>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Browse and download music from your NAS or receive files over Wi-Fi. 浏览并下载 NAS 音乐，或通过 WiFi 接收文件。</string>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>UIFileSharingEnabled</key>

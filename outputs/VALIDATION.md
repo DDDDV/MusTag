@@ -47,3 +47,24 @@
 - **服务启用后的真机联网识别尚未验证**。自动化测试注入固定匹配/封面响应，真实命中及封面仍需实测，并使用对应团队签名。此验证不代表内容永久写入文件的许可已确认。
 
 日志分别为 `work/shazam-core-test.log`、`work/shazam-ui-test.log`、`work/shazam-ui-final-test.log`、`work/shazam-device-build.log`。最终 UI 结果：`work/DerivedData/Logs/Test/Test-MusTag-2026.11.04_12-58-00-+0800.xcresult`。
+
+## 连接下载与本地编辑（2026-11-10）
+
+所有来源先复制或下载到 `Documents/Music`，保存与恢复仅操作本地副本；系统“文件”App 可查看 MusTag → Music。连接覆盖文件/文件夹、WiFi、WebDAV、SMB、FTP、Subsonic、Navidrome、飞牛音乐，未加入网盘源或远端修改接口。
+
+| 验证项 | 结果 |
+| --- | --- |
+| 模拟器构建与完整单元测试 | iPhone 16 Pro / iOS 18.6，226 / 226 通过 |
+| 相关 UI 流程 | 3 / 3 通过：连接入口及六类配置、空资料库导入入口、真实音频本地编辑/保存/恢复 |
+| 上游源码校验 | 1107 个文件通过；新复用的 SMBClient 110 个文件与 NetMusic 原件逐字节一致 |
+| 差异格式检查 | 自有代码通过暂存差异检查；SMBClient 原包已有尾部空格，按原样保留 |
+
+本地文件回归覆盖外部原件保持不变、重复导入不覆盖编辑、迁移失败后恢复、容器路径变化、元数据备份与恢复、符号链接和路径越界。下载回归覆盖同名文件保留、连接账号隔离、完整音频校验、递归下载部分失败、取消后保留已完成文件并清理暂存。
+
+WebDAV、FTP 和 WiFi 使用真实回环 HTTP/TCP 测试，包括 WebDAV URL 编码与斜杠、302 拒绝、下载中进度、任务取消/断开，FTP 被动数据连接及完成响应，WiFi 会话访问码、损坏文件和中断上传。音乐服务器使用固定接口响应，验证分页、原始文件名、下载端点和不传转码参数；SMB 验证配置与共享路径，适配器只调用读取操作。
+
+尚未验证真实 NAS、Subsonic/Navidrome、飞牛账号、真机局域网授权及各服务端版本兼容性。FTP 当前仅支持明文 `ftp://`，SMB 库支持 SMB 2.0.2/2.1。飞牛参考 NetMusic 的媒体接口且核对大小，不代表已证明所有飞牛版本均按相同行为返回原件。
+
+最终单元测试日志：`/private/tmp/MusTag-connections-unit-5.log`；结果：`/private/tmp/MusTagConnections-unit-5.xcresult`。UI 日志：`/private/tmp/MusTag-connections-validation-4.log`；结果：`/private/tmp/MusTagConnections-validation-4.xcresult`。UI 所在轮次有一项 WebDAV 进度断言失败，该项已修复并在最终 226 项测试中通过，UI 本身全部通过。临时目录中的日志可能被系统清理。
+
+已检查的真实模拟器截图：[连接列表](05-connections-ios18.png)、[WiFi 接收](06-wifi-transfer-ios18.png)、[本机音乐位置](07-local-music-files-ios18.png)。

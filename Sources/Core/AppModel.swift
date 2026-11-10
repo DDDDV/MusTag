@@ -40,6 +40,7 @@ final class AppModel: ObservableObject {
     private var persistenceTask: Task<Void, Never>?
     private var loaded = false
     private var canPersist = false
+    private var pendingLocalImports: [URL] = []
     private let uiTestDirectory: URL?
 
     private static var isUITesting: Bool {
@@ -107,6 +108,19 @@ final class AppModel: ObservableObject {
     }
 
     var isWorking: Bool { operation != nil }
+    var localLibraryDirectory: URL { fileStore.libraryDirectory }
+
+    func enqueueLocalImports(_ urls: [URL]) {
+        pendingLocalImports.append(contentsOf: urls)
+        drainLocalImports()
+    }
+
+    private func drainLocalImports() {
+        guard canPersist, !isWorking, !pendingLocalImports.isEmpty else { return }
+        let urls = Array(Set(pendingLocalImports))
+        pendingLocalImports.removeAll()
+        importFiles(urls)
+    }
     var hasAPIKey: Bool { !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     var recognitionHint: String {
         recognitionProvider == .shazamKit
@@ -165,6 +179,7 @@ final class AppModel: ObservableObject {
             #endif
             canPersist = true
             if uiTestDirectory != nil { await persistNow() }
+            drainLocalImports()
         } catch { notice = error.localizedDescription }
     }
 
@@ -336,7 +351,10 @@ final class AppModel: ObservableObject {
                 }
                 var refreshedDrafts = 0
                 for incoming in result.documents {
-                    if let index = documents.firstIndex(where: { $0.url.standardizedFileURL == incoming.url.standardizedFileURL }) {
+                    if let index = documents.firstIndex(where: { existing in
+                        existing.id == incoming.id || existing.url.standardizedFileURL == incoming.url.standardizedFileURL ||
+                        (incoming.sourceURL != nil && (existing.sourceURL ?? existing.url).standardizedFileURL == incoming.sourceURL?.standardizedFileURL)
+                    }) {
                         let existing = documents[index]
                         var refreshed = incoming
                         refreshed.id = existing.id
@@ -550,6 +568,7 @@ final class AppModel: ObservableObject {
         operation = nil
         currentFile = ""
         operationTask = nil
+        drainLocalImports()
     }
 
     private func setError(_ message: String?, for id: UUID) {

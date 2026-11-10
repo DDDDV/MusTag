@@ -57,7 +57,7 @@ final class LibraryFlowTests: XCTestCase {
         var edited = original.draft
         edited.title = "My pending title"
 
-        // Refresh an external edit while preserving only the user's edited fields.
+        // Reimporting an externally changed source must keep the existing local copy and draft.
         var external = original.original
         external.artist = "External artist"
         try NativeMetadataCodec().write(external, to: song)
@@ -75,7 +75,8 @@ final class LibraryFlowTests: XCTestCase {
         XCTAssertEqual(refreshed.importFolderIDs, [folder.id])
         XCTAssertEqual(refreshed.draft.title, "My pending title")
         XCTAssertEqual(refreshed.original.title, original.original.title)
-        XCTAssertEqual(refreshed.draft.artist, "External artist")
+        XCTAssertEqual(refreshed.draft.artist, original.original.artist)
+        XCTAssertEqual(refreshed.url, original.url)
         XCTAssertEqual(try NativeMetadataCodec().read(from: song).tags, external,
                        "Refreshing a draft must not write it to the source file")
 
@@ -138,7 +139,8 @@ final class LibraryFlowTests: XCTestCase {
         try await waitUntilIdle(model)
         XCTAssertNil(model.notice)
         let backup = try XCTUnwrap(model.backupRecords.first)
-        XCTAssertNotEqual(try Data(contentsOf: song), originalBytes)
+        XCTAssertNotEqual(try Data(contentsOf: document.url), originalBytes)
+        XCTAssertEqual(try Data(contentsOf: song), originalBytes)
 
         // Restore starts before the removed folder has reached the debounced index.
         model.removeFolder(folder)
@@ -149,9 +151,45 @@ final class LibraryFlowTests: XCTestCase {
         XCTAssertTrue(model.folders.isEmpty)
         XCTAssertEqual(model.standaloneDocuments.map(\.id), [document.id])
         XCTAssertEqual(try Data(contentsOf: song), originalBytes)
+        XCTAssertEqual(try Data(contentsOf: document.url), originalBytes)
         let reloaded = await loadedModel()
         XCTAssertTrue(reloaded.folders.isEmpty)
         XCTAssertEqual(reloaded.standaloneDocuments.map(\.id), [document.id])
+    }
+
+    @MainActor
+    func testReimportAfterFailedLegacyMigrationKeepsOneDocumentAndItsDraft() async throws {
+        let album = try directory("Legacy Album")
+        let source = try audio("Legacy Song", in: album)
+        let bytes = try Data(contentsOf: source)
+        let snapshot = try NativeMetadataCodec().read(from: source)
+        let folder = AudioFolder(url: album)
+        var legacy = AudioDocument(url: source, bookmark: nil, original: snapshot.tags, draft: snapshot.tags,
+                                   duration: snapshot.duration, error: nil, sourceHash: try AudioFileStore.fileHash(source),
+                                   originalArtwork: snapshot.artwork, draftArtwork: snapshot.artwork,
+                                   importFolderIDs: [folder.id])
+        legacy.draft.title = "Keep my pending draft"
+        let store = AudioFileStore(codec: NativeMetadataCodec(), storageDirectory: root.appendingPathComponent("State"))
+        try await store.persistLibrary(AudioLibrary(documents: [legacy], folders: [folder]))
+        try FileManager.default.removeItem(at: source)
+        let model = await loadedModel()
+        XCTAssertNotNil(model.documents.first?.error)
+        try bytes.write(to: source)
+
+        model.importFiles([album])
+        try await waitUntilIdle(model)
+
+        XCTAssertEqual(model.documents.count, 1)
+        XCTAssertEqual(model.folders.count, 1)
+        let recovered = try XCTUnwrap(model.documents.first)
+        XCTAssertEqual(recovered.id, legacy.id)
+        XCTAssertEqual(recovered.draft, legacy.draft)
+        XCTAssertEqual(recovered.importFolderIDs, legacy.importFolderIDs)
+        XCTAssertNotEqual(recovered.url, source)
+        XCTAssertNil(recovered.error)
+        let relaunched = await loadedModel()
+        XCTAssertEqual(relaunched.documents.first?.draft, legacy.draft)
+        XCTAssertEqual(relaunched.documents.count, 1)
     }
 
     private func directory(_ name: String) throws -> URL {

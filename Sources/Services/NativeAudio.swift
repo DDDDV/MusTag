@@ -40,12 +40,12 @@ enum NativeAudio {
         }, onCancel: { worker.cancel() })
     }
 
-    /// Hash encoded audio, not tags or container offsets. Streams chunks to bound memory.
-    static func payloadHash(url: URL) throws -> String {
+    /// Ordered encoded-audio ranges. Everything outside these ranges is metadata or container structure.
+    static func payloadRanges(url: URL) throws -> [AudioPayloadRange] {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
         let size = try handle.seekToEnd()
-        var ranges: [(UInt64, UInt64)] = []
+        var ranges: [AudioPayloadRange] = []
         func read(_ offset: UInt64, _ count: Int) throws -> Data {
             guard offset <= size, UInt64(count) <= size - offset else { throw invalidAudio() }
             try handle.seek(toOffset: offset)
@@ -57,6 +57,7 @@ enum NativeAudio {
         switch url.pathExtension.lowercased() {
         case "mp3":
             let range = try MTTagBridge.mpegRange(url: url)
+            guard range.count == 2 else { throw invalidAudio() }
             ranges = [(range[0].uint64Value, range[1].uint64Value)]
         case "flac":
             var offset: UInt64 = 0
@@ -70,6 +71,7 @@ enum NativeAudio {
             offset += 4
             var last = false
             while !last {
+                try Task.checkCancellation()
                 let header = try read(offset, 4)
                 last = header[0] & 0x80 != 0
                 offset += 4 + uint(header.subdata(in: 1..<4))
@@ -82,6 +84,7 @@ enum NativeAudio {
         case "m4a", "mp4":
             var offset: UInt64 = 0
             while offset < size {
+                try Task.checkCancellation()
                 let header = try read(offset, 8)
                 var length = uint(header.prefix(4))
                 var headerSize: UInt64 = 8
@@ -96,6 +99,22 @@ enum NativeAudio {
         default: throw invalidAudio()
         }
         guard !ranges.isEmpty else { throw invalidAudio() }
+        var previousEnd: UInt64 = 0
+        for (offset, length) in ranges {
+            guard length > 0, offset >= previousEnd, offset <= size, length <= size - offset else {
+                throw invalidAudio()
+            }
+            previousEnd = offset + length
+        }
+        return ranges
+    }
+
+    /// Hash encoded audio, not tags or container offsets. Streams chunks to bound memory.
+    static func payloadHash(url: URL) throws -> String {
+        let ranges = try payloadRanges(url: url)
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        let size = try handle.seekToEnd()
         var hasher = SHA256()
         for (offset, length) in ranges {
             guard offset <= size, length <= size - offset else { throw invalidAudio() }

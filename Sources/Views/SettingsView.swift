@@ -84,7 +84,7 @@ struct SettingsView: View {
                     }
                     .accessibilityIdentifier("backupHistoryButton")
                 } footer: {
-                    Text(L10n.text("Backups are stored on this device and use storage. Keep the app installed until you no longer need them.", "备份保存在此设备，会占用存储空间。需要恢复时，请保留此 App 及其数据。"))
+                    Text(L10n.text("New backups store the original tags and covers without audio. To undo changes, keep the audio files and this app's data. Older full-file backups remain available.", "新备份仅保存原标签、封面等信息，不包含音频内容。撤销修改需要保留音频文件及此 App 的数据。旧版完整文件备份仍可使用。"))
                 }
 
                 Section {
@@ -131,12 +131,16 @@ private struct BackupHistoryView: View {
     var body: some View {
         Group {
             if model.backupRecords.isEmpty {
-                ContentUnavailableView(L10n.text("No saved changes yet", "尚无已保存的修改"), systemImage: "clock.arrow.circlepath", description: Text(L10n.text("A backup is created before each file is changed.", "每次修改文件前会自动创建备份。")))
+                ContentUnavailableView(L10n.text("No saved changes yet", "尚无已保存的修改"), systemImage: "clock.arrow.circlepath", description: Text(L10n.text("Original tags and covers are backed up before each save.", "每次保存前会自动备份原标签和封面。")))
             } else {
                 List(model.backupRecords.sorted { $0.createdAt > $1.createdAt }) { backup in
                     VStack(alignment: .leading, spacing: 8) {
                         Text(backup.originalURL.lastPathComponent).font(.body.weight(.medium))
                         Text(backup.createdAt, format: .dateTime.year().month().day().hour().minute())
+                            .font(.caption).foregroundStyle(.secondary)
+                        Text(backup.backupHash == nil
+                             ? L10n.text("Full-file backup · older version", "完整文件备份 · 旧版")
+                             : L10n.text("Tags and covers · audio file required to restore", "标签和封面备份 · 恢复需保留音频文件"))
                             .font(.caption).foregroundStyle(.secondary)
                         HStack {
                             if backup.restored {
@@ -182,6 +186,7 @@ private struct LicenseView: View {
                 NavigationLink("TagLib · LGPL", value: SettingsDestination.license("TagLib-LGPL"))
                 NavigationLink("Chromaprint · LGPL 2.1", value: SettingsDestination.license("Chromaprint"))
                 NavigationLink("utf8cpp · Boost Software License", value: SettingsDestination.license("utf8cpp"))
+                NavigationLink("SMBClient · MIT", value: SettingsDestination.license("SMBClient"))
             }
             Section {
                 Link("ShazamKit", destination: URL(string: "https://developer.apple.com/shazamkit/")!)

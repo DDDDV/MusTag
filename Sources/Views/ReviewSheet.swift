@@ -13,7 +13,7 @@ struct ReviewSheet: View {
         NavigationStack {
             List {
                 Section {
-                    Label(L10n.text("Original files will be updated. A full backup is kept for undo.", "将更新原文件，并保留完整备份以便撤销。"), systemImage: "arrow.uturn.backward.circle")
+                    Label(L10n.text("Changes are saved to this device's Music folder. Tags and covers are backed up for undo; remote and imported source files are never changed.", "修改仅保存到本机 Music 文件夹，并备份标签和封面以便撤销。远程文件和导入来源的文件不会被修改。"), systemImage: "arrow.uturn.backward.circle")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }

@@ -35,8 +35,8 @@ struct WelcomeView: View {
                             .accessibilityAddTraits(.isHeader)
 
                         Text(L10n.text(
-                            "Batch-identify MP3, FLAC and M4A files to fill in titles, artists, albums, years, genres and covers, or edit tags manually. Review and confirm before saving to the original files, with a backup created before each save.",
-                            "支持 MP3、FLAC 和 M4A，批量识别并补全歌名、艺术家、专辑、年份、流派与封面，也可手动编辑标签。预览确认后写回原文件，保存前自动备份。"))
+                            "Batch-identify MP3, FLAC and M4A files to fill in titles, artists, albums, years, genres and covers, or edit tags manually. All files are copied to this device. Review and confirm before saving to the Music folder, with a metadata backup before each save.",
+                            "支持 MP3、FLAC 和 M4A，批量识别并补全歌名、艺术家、专辑、年份、流派与封面，也可手动编辑标签。所有文件先复制到本机，预览确认后保存到 Music 文件夹，保存前自动备份元数据。"))
                             .font(.subheadline)
                             .lineSpacing(5)
                             .foregroundStyle(.secondary)
@@ -142,8 +142,8 @@ private struct WelcomeFAQView: View {
 
                     answer("folder", question: L10n.text("Which files can I import?", "可以导入哪些音乐？"),
                            text: L10n.text(
-                            "MusTag supports MP3, FLAC and M4A. Choose multiple files or a folder from Files, including iCloud Drive. For a NAS, connect to the server in Files first, then choose its folder here.",
-                            "支持 MP3、FLAC 和 M4A。可以从系统“文件”中选择多个文件或整个文件夹，也支持 iCloud Drive。使用 NAS 时，先在“文件”中连接服务器，再回来选择文件夹。"))
+                            "MusTag supports MP3, FLAC and M4A. Import files or folders, receive music over Wi-Fi, or download from WebDAV, SMB, FTP, Subsonic, Navidrome and FeiNiu Music in Connections. All files are saved locally.",
+                            "支持 MP3、FLAC 和 M4A。可导入文件或文件夹、使用 WiFi 传歌，或在“连接”中从 WebDAV、SMB、FTP、Subsonic、Navidrome、飞牛音乐下载。所有文件均保存在本机。"))
 
                     answer("waveform", question: L10n.text("How does recognition work?", "如何识别并补全标签？"),
                            text: L10n.text(
@@ -152,8 +152,8 @@ private struct WelcomeFAQView: View {
 
                     answer("checkmark.shield", question: L10n.text("Will my original audio change?", "会改变原来的音质吗？"),
                            text: L10n.text(
-                            "Saving changes tags without re-encoding the audio. Nothing is written to your files until you review and confirm. MusTag creates a full backup before each save; saved changes can be undone in Settings. Backups are kept on this device and are removed if you delete the app.",
-                            "保存时只修改标签，不重新编码音频。预览并确认保存后，才会写回原文件；每次保存前都会完整备份。可以在设置中撤销已保存的修改。备份保存在本机，卸载 App 时会一并删除。"))
+                            "Saving changes tags without re-encoding the audio. Only local copies are updated after you review and confirm; source files are never changed. Before each save, MusTag backs up the original tags and covers without storing the audio. Undo in Settings requires the audio file and the backup. Backups are kept on this device and are removed if you delete the app.",
+                            "保存时只修改标签，不重新编码音频。预览并确认保存后，仅修改本机副本，来源文件不会被改动；每次保存前会备份原标签和封面，不保存音频内容。在设置中撤销修改时，需要保留音频文件和备份。备份保存在本机，卸载 App 时会一并删除。"))
 
                     answer("square.and.pencil", question: L10n.text("What if a song isn't recognized?", "没有匹配结果怎么办？"),
                            text: L10n.text(

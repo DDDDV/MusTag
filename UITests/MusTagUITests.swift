@@ -51,7 +51,7 @@ final class MusTagUITests: XCTestCase {
         app.tabBars.buttons["Connections"].tap()
         XCTAssertTrue(app.navigationBars["Connections"].waitForExistence(timeout: 3))
         let list = app.collectionViews.firstMatch
-        for title in ["Local", "NAS & Servers"] {
+        for title in ["Local", "Add NAS or server"] {
             let header = app.staticTexts.matching(NSPredicate(format: "label ==[c] %@", title)).firstMatch
             XCTAssertTrue(header.exists, title)
         }
@@ -70,34 +70,55 @@ final class MusTagUITests: XCTestCase {
             XCTAssertTrue(app.tabBars.buttons["Connections"].isSelected)
         }
 
-        for (service, title) in [("smb", "SMB"), ("ftp", "FTP"),
-                                 ("webDAV", "WebDAV"), ("navidrome", "Navidrome")] {
+        for (service, title) in [("webDAV", "WebDAV"), ("smb", "SMB"), ("ftp", "FTP"),
+                                 ("subsonic", "Subsonic"), ("navidrome", "Navidrome"),
+                                 ("feiniu", "FeiNiu Music")] {
             let row = app.buttons["connectionService_\(service)"]
             for _ in 0..<4 where !row.isHittable { list.swipeUp() }
             XCTAssertTrue(row.isHittable, service)
             row.tap()
-            let detail = app.descendants(matching: .any)
-                .matching(identifier: "connectionServiceDetail_\(service)").firstMatch
-            XCTAssertTrue(detail.waitForExistence(timeout: 3), service)
-            XCTAssertTrue(app.staticTexts.matching(NSPredicate(
+            XCTAssertTrue(app.navigationBars[title].waitForExistence(timeout: 3), service)
+            let address = app.textFields["connectionAddressField"]
+            XCTAssertTrue(address.exists, service)
+            XCTAssertTrue(app.textFields["Username"].exists, service)
+            XCTAssertTrue(app.secureTextFields["Password"].exists, service)
+            let connect = app.buttons["saveConnectionButton"]
+            XCTAssertTrue(connect.exists, service)
+            XCTAssertFalse(connect.isEnabled, "An empty server address cannot be connected")
+            if service == "smb" {
+                XCTAssertTrue(app.textFields["Domain (optional)"].exists)
+                XCTAssertTrue(app.textFields["Starting folder (optional)"].exists)
+            } else {
+                let insecure = app.switches["Allow unencrypted connection"]
+                XCTAssertTrue(insecure.exists, service)
+                XCTAssertEqual(insecure.value as? String, "0", "Unencrypted access must require an explicit choice")
+            }
+            XCTAssertFalse(app.staticTexts.matching(NSPredicate(
                 format: "label CONTAINS %@", "Connections are not available yet.")).firstMatch.exists)
-            app.navigationBars[title].buttons.element(boundBy: 0).tap()
+            capture("14-connection-form-\(service)")
+            if service == "webDAV" {
+                address.tap()
+                address.typeText("https://example.invalid")
+                XCTAssertTrue(connect.isEnabled, "A configured address should enable checking the connection")
+            }
+            app.navigationBars[title].buttons["Cancel"].tap()
             XCTAssertTrue(app.navigationBars["Connections"].waitForExistence(timeout: 3))
             XCTAssertTrue(row.exists, service)
         }
 
-        let cloud = app.buttons["connectionCloudButton"]
-        for _ in 0..<4 where !cloud.isHittable { list.swipeUp() }
-        XCTAssertTrue(cloud.isHittable)
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label ==[c] %@", "Cloud storage")).firstMatch.exists)
-        capture("14-connections-cloud-storage")
-        cloud.tap()
-        let cancel = app.buttons["Cancel"].firstMatch
-        XCTAssertTrue(cancel.waitForExistence(timeout: 8))
-        cancel.tap()
-        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: cancel)
-        waitForExpectations(timeout: 3)
-        XCTAssertTrue(app.navigationBars["Connections"].exists)
+        XCTAssertFalse(app.buttons["connectionCloudButton"].exists)
+        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label ==[c] %@", "Cloud storage")).firstMatch.exists)
+        let wifi = app.buttons["connectionWiFiButton"]
+        for _ in 0..<5 where !wifi.isHittable { list.swipeDown() }
+        XCTAssertTrue(wifi.isHittable)
+        wifi.tap()
+        XCTAssertTrue(app.navigationBars["Wi-Fi Transfer"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["startWiFiTransferButton"].exists)
+        XCTAssertEqual(app.textFields["Port"].value as? String, "8080")
+        XCTAssertFalse(app.buttons["Stop transfer service"].exists)
+        capture("15-wifi-transfer")
+        app.navigationBars["Wi-Fi Transfer"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.navigationBars["Connections"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.tabBars.buttons["Connections"].isSelected)
     }
 
@@ -354,6 +375,18 @@ final class MusTagUITests: XCTestCase {
         waitForExpectations(timeout: 15)
         app.navigationBars["Edit tags"].buttons.element(boundBy: 0).tap()
         XCTAssertTrue(app.staticTexts[editedTitle].waitForExistence(timeout: 3))
+        app.tabBars.buttons["Connections"].tap()
+        let localFiles = app.buttons["Local music folder"]
+        XCTAssertTrue(localFiles.waitForExistence(timeout: 3))
+        localFiles.tap()
+        XCTAssertTrue(app.navigationBars["Local files"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(
+            format: "label CONTAINS %@", "Files → On My iPhone/iPad → MusTag → Music")).firstMatch.exists)
+        XCTAssertTrue(app.buttons["refreshLocalFilesButton"].exists)
+        capture("16-saved-audio-local-location")
+        app.tabBars.buttons["Home"].tap()
+        XCTAssertTrue(app.staticTexts[editedTitle].waitForExistence(timeout: 3),
+                      "Opening the local file location must keep the saved edit")
         app.tabBars.buttons["Settings"].tap()
         app.buttons["backupHistoryButton"].tap()
         let restore = app.buttons["Restore original"].firstMatch
