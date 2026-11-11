@@ -488,6 +488,232 @@ final class LibraryFlowTests: XCTestCase {
         XCTAssertEqual(relaunched.documents.count, 1)
     }
 
+    @MainActor
+    func testCancellingLocalDeletionPreservesFileDraftAndLibraryAcrossRelaunch() async throws {
+        let source = try audio("Keep", in: root)
+        let model = await loadedModel()
+        model.importFiles([source])
+        try await waitUntilIdle(model)
+        let document = try XCTUnwrap(model.documents.first)
+        var draft = document.draft
+        draft.title = "Keep my unsaved title"
+        model.updateDraft(draft, for: document.id)
+        let originalBytes = try Data(contentsOf: document.url)
+
+        model.prepareDeletion(documentIDs: [document.id])
+        try await waitForDeletionPlan(model)
+        XCTAssertEqual(model.deletionPlan?.fileCount, 1)
+        model.cancelDeletion()
+        await flushScheduledPersistence(model)
+
+        XCTAssertNil(model.deletionPlan)
+        XCTAssertEqual(try Data(contentsOf: document.url), originalBytes)
+        XCTAssertEqual(model.document(document.id)?.draft, draft)
+        let reloaded = await loadedModel()
+        XCTAssertEqual(reloaded.document(document.id)?.draft, draft)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
+    }
+
+    @MainActor
+    func testBatchLocalDeletionRemovesSelectedFilesAndPreservesOtherPendingDraft() async throws {
+        let first = try audio("First", in: root)
+        let second = try audio("Second", in: root)
+        let keep = try audio("Keep", in: root)
+        let model = await loadedModel()
+        model.importFiles([first, second, keep])
+        try await waitUntilIdle(model)
+        let survivor = try XCTUnwrap(model.documents.first { $0.fileName == keep.lastPathComponent })
+        let removed = model.documents.filter { $0.id != survivor.id }
+        var draft = survivor.draft
+        draft.artist = "Unsaved survivor"
+        model.updateDraft(draft, for: survivor.id)
+
+        model.prepareDeletion(documentIDs: Set(removed.map(\.id)))
+        try await waitForDeletionPlan(model)
+        XCTAssertEqual(model.deletionPlan?.fileCount, 2)
+        model.confirmDeletion()
+        try await waitUntilIdle(model)
+
+        XCTAssertEqual(model.documents.map(\.id), [survivor.id])
+        XCTAssertEqual(model.documents.first?.draft, draft)
+        for document in removed {
+            XCTAssertFalse(FileManager.default.fileExists(atPath: document.url.path))
+        }
+        for source in [first, second, keep] {
+            XCTAssertTrue(FileManager.default.fileExists(atPath: source.path), "Sources must remain unchanged")
+        }
+        let reloaded = await loadedModel()
+        XCTAssertEqual(reloaded.documents.map(\.id), [survivor.id])
+        XCTAssertEqual(reloaded.documents.first?.draft, draft)
+        reloaded.importFiles([first])
+        try await waitUntilIdle(reloaded)
+        XCTAssertEqual(reloaded.documents.count, 2, "Deleted files must be importable again")
+        XCTAssertEqual(reloaded.document(survivor.id)?.draft, draft)
+        let importedAgain = try XCTUnwrap(reloaded.documents.first { $0.fileName == first.lastPathComponent })
+        XCTAssertFalse(removed.map(\.id).contains(importedAgain.id))
+        XCTAssertFalse(importedAgain.hasChanges)
+    }
+
+    @MainActor
+    func testMixedBatchDeletionRemovesNestedAndEmptyFoldersWithoutDeletingSources() async throws {
+        let album = try directory("Album")
+        let disc = try directory("Album/Disc 2")
+        let empty = try directory("Empty")
+        let other = try directory("Other")
+        let direct = try audio("Single", in: root)
+        let first = try audio("First", in: album)
+        let nested = try audio("Nested", in: disc)
+        let keep = try audio("Keep", in: other)
+        let model = await loadedModel()
+        model.importFiles([direct, album, disc, empty, other])
+        try await waitUntilIdle(model)
+        let selectedFolders = model.folders.filter { $0.name != "Other" }
+        XCTAssertEqual(selectedFolders.count, 3)
+        let directDocument = try XCTUnwrap(model.documents.first { $0.fileName == direct.lastPathComponent })
+        let survivingDocument = try XCTUnwrap(model.documents.first { $0.fileName == keep.lastPathComponent })
+        let parent = try XCTUnwrap(selectedFolders.first { $0.name == "Album" })
+        let unlistedFile = parent.url.appendingPathComponent("Notes.txt")
+        try Data("A local file not indexed in the music list".utf8).write(to: unlistedFile)
+
+        model.prepareDeletion(documentIDs: [directDocument.id], folderIDs: Set(selectedFolders.map(\.id)))
+        try await waitForDeletionPlan(model)
+        XCTAssertEqual(model.deletionPlan?.fileCount, 4, "Nested folder selections must be deduplicated")
+        model.confirmDeletion()
+        try await waitUntilIdle(model)
+
+        XCTAssertEqual(model.documents.map(\.id), [survivingDocument.id])
+        XCTAssertEqual(model.folders.map(\.name), ["Other"])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: directDocument.url.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: unlistedFile.path))
+        for folder in selectedFolders { XCTAssertFalse(FileManager.default.fileExists(atPath: folder.url.path)) }
+        for source in [direct, first, nested, keep] { XCTAssertTrue(FileManager.default.fileExists(atPath: source.path)) }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: empty.path))
+
+        let reloaded = await loadedModel()
+        XCTAssertEqual(reloaded.documents.map(\.id), [survivingDocument.id])
+        XCTAssertEqual(reloaded.folders.map(\.name), ["Other"])
+    }
+
+    @MainActor
+    func testDeletingSharedFileRemovesAllFolderReferencesButKeepsFolders() async throws {
+        let parent = try directory("Album")
+        let child = try directory("Album/Disc 2")
+        _ = try audio("Shared", in: child)
+        let model = await loadedModel()
+        model.importFiles([parent, child])
+        try await waitUntilIdle(model)
+        let document = try XCTUnwrap(model.documents.first)
+        XCTAssertEqual(document.importFolderIDs?.count, 2)
+        let folderIDs = Set(model.folders.map(\.id))
+
+        model.prepareDeletion(documentIDs: [document.id])
+        try await waitForDeletionPlan(model)
+        model.confirmDeletion()
+        try await waitUntilIdle(model)
+
+        XCTAssertTrue(model.documents.isEmpty)
+        XCTAssertEqual(Set(model.folders.map(\.id)), folderIDs)
+        for folder in model.folders { XCTAssertTrue(model.documents(in: folder).isEmpty) }
+        let reloaded = await loadedModel()
+        XCTAssertTrue(reloaded.documents.isEmpty)
+        XCTAssertEqual(Set(reloaded.folders.map(\.id)), folderIDs)
+    }
+
+    @MainActor
+    func testActualLocalBrowserCanDeleteAFileAlreadyRemovedFromLibrary() async throws {
+        let source = try audio("Hidden local copy", in: root)
+        let model = await loadedModel()
+        model.importFiles([source])
+        try await waitUntilIdle(model)
+        let document = try XCTUnwrap(model.documents.first)
+        model.remove([document.id])
+        await flushScheduledPersistence(model)
+        XCTAssertTrue(model.documents.isEmpty)
+        let localEntries = try await model.localFiles(in: document.url.deletingLastPathComponent())
+        XCTAssertTrue(localEntries.contains { $0.url == document.url })
+
+        model.prepareDeletion(urls: [document.url])
+        try await waitForDeletionPlan(model)
+        model.confirmDeletion()
+        try await waitUntilIdle(model)
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: document.url.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
+        model.enqueueLocalImports([model.localLibraryDirectory])
+        try await waitUntilIdle(model)
+        XCTAssertTrue(model.documents.isEmpty, "Refreshing must not restore a deleted local file")
+        let reloaded = await loadedModel()
+        XCTAssertTrue(reloaded.documents.isEmpty)
+    }
+
+    @MainActor
+    func testDeletingSavedSongRetainsBackupAndMarksItsAudioMissing() async throws {
+        let source = try audio("Saved song", in: root)
+        let model = await loadedModel()
+        model.importFiles([source])
+        try await waitUntilIdle(model)
+        let document = try XCTUnwrap(model.documents.first)
+        var draft = document.draft
+        draft.title = "Saved before deletion"
+        model.updateDraft(draft, for: document.id)
+        model.save([document.id])
+        try await waitUntilIdle(model)
+        let backup = try XCTUnwrap(model.backupRecords.first)
+
+        model.prepareDeletion(documentIDs: [document.id])
+        try await waitForDeletionPlan(model)
+        model.confirmDeletion()
+        try await waitUntilIdle(model)
+
+        XCTAssertTrue(model.documents.isEmpty)
+        XCTAssertEqual(model.backupRecords.map(\.id), [backup.id])
+        XCTAssertTrue(model.missingBackupAudioIDs.contains(backup.id))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: backup.backupURL.path))
+        let reloaded = await loadedModel()
+        XCTAssertEqual(reloaded.backupRecords.map(\.id), [backup.id])
+        XCTAssertTrue(reloaded.missingBackupAudioIDs.contains(backup.id))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
+    }
+
+    @MainActor
+    func testQueuedImportForDeletedFolderCannotRecreateItsDirectoryOrListEntry() async throws {
+        let model = await loadedModel()
+        let download = model.localLibraryDirectory.appendingPathComponent("Connections/Downloaded Album", isDirectory: true)
+        try FileManager.default.createDirectory(at: download, withIntermediateDirectories: true)
+        _ = try audio("Downloaded song", in: download)
+        model.enqueueLocalImports([download])
+        try await waitUntilIdle(model)
+        let folder = try XCTUnwrap(model.folders.first)
+        model.prepareDeletion(folderIDs: [folder.id])
+        try await waitForDeletionPlan(model)
+
+        // Model the delayed notification from a completed transfer while its
+        // deletion confirmation is still open.
+        model.enqueueLocalImports([download])
+        XCTAssertEqual(model.documents.count, 1)
+        model.confirmDeletion()
+        try await waitUntilIdle(model)
+
+        XCTAssertTrue(model.documents.isEmpty)
+        XCTAssertTrue(model.folders.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: download.path))
+        let reloaded = await loadedModel()
+        XCTAssertTrue(reloaded.documents.isEmpty)
+        XCTAssertTrue(reloaded.folders.isEmpty)
+    }
+
+    @MainActor
+    private func waitForDeletionPlan(_ model: AppModel) async throws {
+        let deadline = Date().addingTimeInterval(5)
+        while model.isPreparingDeletion, Date() < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        guard model.deletionPlan != nil else {
+            XCTFail("Deletion preview did not become available: \(model.notice ?? "no error")")
+            throw URLError(.timedOut)
+        }
+    }
+
     private func directory(_ name: String) throws -> URL {
         let url = root.appendingPathComponent(name, isDirectory: true)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)

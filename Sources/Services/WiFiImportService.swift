@@ -182,6 +182,7 @@ private final class WiFiUploadConnection: @unchecked Sendable {
     private var done = false
     private var processing = false
     private var work: Task<Void, Never>?
+    private var activityLease: LocalLibraryAccess.Lease?
     private var timeout: DispatchWorkItem?
 
     init(connection: NWConnection, queue: DispatchQueue, token: String, repository: LocalDownloadRepository,
@@ -200,6 +201,7 @@ private final class WiFiUploadConnection: @unchecked Sendable {
     func cancel() {
         guard !done else { return }
         done = true; timeout?.cancel(); work?.cancel()
+        activityLease = nil
         try? handle?.close(); handle = nil
         if let temporary { try? FileManager.default.removeItem(at: temporary) }
         connection.cancel(); finished()
@@ -232,6 +234,7 @@ private final class WiFiUploadConnection: @unchecked Sendable {
             let body = Data(buffer[range.upperBound...]); buffer = Data()
             if request.method == "GET" { respond(status: 200, text: Self.page, html: true); return }
             guard let relative = request.relativePath else { throw MusTagError.message("Missing file path") }
+            activityLease = try LocalLibraryAccess.shared.acquire(repository.libraryDirectory)
             processing = true
             work = Task { [weak self] in
                 guard let self else { return }
@@ -262,7 +265,9 @@ private final class WiFiUploadConnection: @unchecked Sendable {
         guard count == request.length, let temporary, let path = request.relativePath else { return }
         try handle?.synchronize(); try handle?.close(); handle = nil
         processing = true; timeout?.cancel()
-        work = Task { [weak self] in
+        let lease = activityLease
+        work = Task { [weak self, lease] in
+            defer { withExtendedLifetime(lease) {} }
             guard let self else { return }
             do {
                 try Task.checkCancellation()

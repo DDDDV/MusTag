@@ -68,3 +68,25 @@ WebDAV、FTP 和 WiFi 使用真实回环 HTTP/TCP 测试，包括 WebDAV URL 编
 最终单元测试日志：`/private/tmp/MusTag-connections-unit-5.log`；结果：`/private/tmp/MusTagConnections-unit-5.xcresult`。UI 日志：`/private/tmp/MusTag-connections-validation-4.log`；结果：`/private/tmp/MusTagConnections-validation-4.xcresult`。UI 所在轮次有一项 WebDAV 进度断言失败，该项已修复并在最终 226 项测试中通过，UI 本身全部通过。临时目录中的日志可能被系统清理。
 
 已检查的真实模拟器截图：[连接列表](05-connections-ios18.png)、[WiFi 接收](06-wifi-transfer-ios18.png)、[本机音乐位置](07-local-music-files-ios18.png)。
+
+## 本地文件与文件夹删除（2026-11-11）
+
+在 iPhone 16 Pro / iOS 18.6 已安装模拟器上验证，使用隔离的真实音频测试文件。构建禁用依赖自动解析和更新；没有安装新依赖、修改第三方代码或提交、推送代码。
+
+| 验证项 | 结果 |
+| --- | --- |
+| 完整单元测试 | 270 / 270 通过 |
+| 相关界面流程 | 12 / 12 通过，包含 6 条新增删除流程 |
+| 差异格式检查 | `git diff --check` 通过 |
+
+新增 27 项单元测试覆盖单首/批量文件、多个文件夹、嵌套目录、空目录、文件与文件夹混选去重、隐藏及非音频内容、所有分组引用清理、来源文件保留、缺失文件记录清理、部分失败、确认后新增/替换内容保护、路径越界和符号链接拒绝。删除操作会同步资料库、导入和下载索引；验证了删除后重启、重新下载/导入、两个下载仓库的索引同步、未完成删除日志重放，以及待导入队列不会重新创建已删目录。
+
+互斥测试覆盖下载进行中不能发起删除、删除确认打开时阻止新下载和 WiFi 落盘、取消后恢复传输、独立资料库互不阻塞。已保存备份保留，目标音频缺失时禁用恢复；旧备份迁移后的路径识别也通过验证。
+
+界面测试覆盖单首取消再确认、文件和多个文件夹混选后重启、空文件夹与有内容文件夹一并删除且保留未选项、删除已从列表移除的文件、编辑页删除后返回首页，以及“导入音乐”弹窗内的删除确认和结果提示。另回归原有批量列表移除、文件夹内选择/预览、连接与导入入口、真实音频标签编辑/保存/恢复。
+
+完整测试日志：`work/local-deletion-regression.log`；结果包：`work/local-deletion-regression.xcresult`。首轮单元测试日志：`work/local-deletion-unit.log`。
+
+截图检查后将删除范围、来源不受影响及不可撤销说明移至项目列表之前，避免多选长列表遮住说明。该布局调整后的单首、混选重启、导入来源弹窗三条界面流程再次全部通过；日志：`work/local-deletion-ui-final.log`，结果包：`work/local-deletion-ui-final.xcresult`。
+
+已检查的最终模拟器截图：[批量文件夹与文件删除](08-batch-folder-delete-ios18.png)、[单首删除确认](09-single-file-delete-ios18.png)、[本机文件管理](10-local-file-manager-ios18.png)。

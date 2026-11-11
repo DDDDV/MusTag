@@ -32,13 +32,14 @@ struct MainTabView: View {
             }
         }
         .alert(L10n.text("Notice", "提示"), isPresented: Binding(
-            get: { model.notice != nil },
+            get: { model.notice != nil && !model.isShowingImportSources },
             set: { if !$0 { model.notice = nil } }
         )) {
             Button(L10n.text("OK", "好"), role: .cancel) { model.notice = nil }
         } message: {
             Text(model.notice ?? "")
         }
+        .localDeletionConfirmation(isEnabled: !model.isShowingImportSources)
     }
 
     private var tabs: some View {

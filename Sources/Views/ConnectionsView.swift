@@ -78,6 +78,15 @@ struct ConnectionsView: View {
                 }
             } message: { _ in Text(L10n.text("Downloaded files and local edits will be kept.", "已下载的文件和本地修改会保留。")) }
         }
+        .localDeletionConfirmation(isEnabled: isImportSheet)
+        .alert(L10n.text("Notice", "提示"), isPresented: Binding(
+            get: { isImportSheet && model.notice != nil },
+            set: { if !$0 && isImportSheet { model.notice = nil } }
+        )) {
+            Button(L10n.text("OK", "好"), role: .cancel) { model.notice = nil }
+        } message: {
+            Text(model.notice ?? "")
+        }
     }
 
     private func importButton(_ mode: AudioPickerMode, title: String, icon: String) -> some View {
@@ -300,19 +309,169 @@ private struct DownloadStatusView: View {
 
 struct LocalMusicFilesView: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.scenePhase) private var scenePhase
+    var directory: URL? = nil
+    @State private var entries: [LocalFileEntry] = []
+    @State private var selected: Set<String> = []
+    @State private var selecting = false
+    @State private var loading = true
+    @State private var loadError: String?
+    private var currentDirectory: URL { directory ?? model.localLibraryDirectory }
+    private var allIDs: Set<String> { Set(entries.map(\.id)) }
+
     var body: some View {
         List {
-            Section {
-                Label(L10n.text("Files → On My iPhone/iPad → MusTag → Music", "文件 → 我的 iPhone/iPad → MusTag → Music"), systemImage: "folder.fill")
-                Text(L10n.text("Imported and downloaded music stays in this folder. Edits are saved here. Copy or share the audio using Files.", "导入和下载的音乐保存在此文件夹，编辑结果也保存在这里。你可以使用“文件”App 复制或分享音频。"))
-                    .font(.subheadline).foregroundStyle(.secondary)
-                Button(L10n.text("Refresh local files", "刷新本地文件")) { model.enqueueLocalImports([model.localLibraryDirectory]) }
-                    .disabled(model.isWorking).accessibilityIdentifier("refreshLocalFilesButton")
+            if directory == nil {
+                Section {
+                    Text(L10n.text("Browse all local files, including items removed from the library list. Select files or folders to delete them from this device.", "这里显示全部本地文件，包括已从资料库列表移除的项目。可选择文件或文件夹，从本机删除。"))
+                        .font(.subheadline).foregroundStyle(.secondary)
+                    Button(L10n.text("Refresh local files", "刷新本地文件")) {
+                        model.enqueueLocalImports([model.localLibraryDirectory])
+                        Task { await reload() }
+                    }
+                    .disabled(model.isWorking || model.isPreparingDeletion)
+                    .accessibilityIdentifier("refreshLocalFilesButton")
+                }
             }
-            Section {
-                Text(L10n.text("Removing a song from MusTag's list keeps the audio file. To free device storage, delete files in Files. Metadata backups cannot recover deleted audio.", "从 MusTag 列表移除歌曲会保留音频文件。如需释放空间，请在“文件”App 中删除文件。元数据备份无法找回已删除的音频。"))
-                    .font(.footnote).foregroundStyle(.secondary)
+            if loading {
+                ProgressView(L10n.text("Loading files…", "正在读取文件…"))
+            } else if let loadError {
+                Text(loadError).foregroundStyle(.secondary)
+            } else if entries.isEmpty {
+                ContentUnavailableView(L10n.text("No local files", "暂无本地文件"), systemImage: "folder")
+                    .accessibilityIdentifier("localFilesEmptyState")
+            } else {
+                if selecting {
+                    Section {
+                        HStack {
+                            Text(L10n.text("\(selected.count) selected", "已选 \(selected.count) 项"))
+                                .accessibilityIdentifier("localFilesSelectedCount")
+                            Spacer()
+                            Button(selected == allIDs ? L10n.text("Deselect all", "取消全选") : L10n.text("Select all", "全选")) {
+                                selected = selected == allIDs ? [] : allIDs
+                            }
+                            .disabled(model.isWorking || model.isPreparingDeletion)
+                            .accessibilityIdentifier("localFilesSelectAllButton")
+                        }
+                    }
+                }
+                Section {
+                    ForEach(entries) { entry in localRow(entry) }
+                } footer: {
+                    Text(L10n.text("Deleting a folder also deletes all its subfolders and local contents. Server files are unaffected.", "删除文件夹会同时删除其中的全部子文件夹和本地内容，不影响服务器上的文件。"))
+                }
             }
-        }.navigationTitle(L10n.text("Local files", "本地文件")).navigationBarTitleDisplayMode(.inline)
+        }
+        .navigationTitle(directory?.lastPathComponent ?? L10n.text("Local files", "本地文件"))
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button(selecting ? L10n.text("Done", "完成") : L10n.text("Select", "选择")) {
+                    selecting.toggle()
+                    selected = []
+                }
+                .disabled(entries.isEmpty || model.isWorking || model.isPreparingDeletion)
+                .accessibilityIdentifier("localFilesSelectButton")
+            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            if model.isWorking { OperationFooter() }
+            else if selecting {
+                Button(role: .destructive) {
+                    model.prepareDeletion(urls: entries.filter { selected.contains($0.id) }.map(\.url))
+                } label: {
+                    Label(L10n.text("Delete selected items", "删除所选文件与文件夹"), systemImage: "trash")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered).controlSize(.large)
+                .disabled(selected.isEmpty || !model.canDeleteLocalFiles)
+                .padding().background(.bar)
+                .accessibilityIdentifier("localFilesBatchDeleteButton")
+            }
+        }
+        .task(id: "\(model.localFilesRevision)-\(model.isWorking)") {
+            if !model.isWorking { await reload() }
+        }
+        .refreshable { await reload() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { Task { await reload() } }
+        }
+    }
+
+    @ViewBuilder
+    private func localRow(_ entry: LocalFileEntry) -> some View {
+        Group {
+            if selecting {
+                Button {
+                    if selected.contains(entry.id) { selected.remove(entry.id) }
+                    else { selected.insert(entry.id) }
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: selected.contains(entry.id) ? "checkmark.circle.fill" : "circle")
+                            .foregroundStyle(selected.contains(entry.id) ? Color.accentColor : .secondary)
+                        entryLabel(entry)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(model.isWorking || model.isPreparingDeletion)
+                .accessibilityAddTraits(selected.contains(entry.id) ? [.isSelected] : [])
+                .accessibilityIdentifier("localFileSelection_\(entry.name)")
+            } else if entry.isDirectory {
+                NavigationLink { LocalMusicFilesView(directory: entry.url) } label: { entryLabel(entry) }
+                    .accessibilityIdentifier("localFileRow_\(entry.name)")
+            } else {
+                entryLabel(entry)
+                    .accessibilityIdentifier("localFileRow_\(entry.name)")
+            }
+        }
+        .swipeActions(allowsFullSwipe: false) {
+            if !selecting {
+                Button(role: .destructive) { model.prepareDeletion(urls: [entry.url]) } label: {
+                    Label(L10n.text("Delete", "删除"), systemImage: "trash")
+                }
+                .disabled(!model.canDeleteLocalFiles)
+                .accessibilityIdentifier("localFileDelete_\(entry.name)")
+            }
+        }
+        .contextMenu {
+            if !selecting {
+                Button(role: .destructive) { model.prepareDeletion(urls: [entry.url]) } label: {
+                    Label(L10n.text("Delete from this device", "从本机删除"), systemImage: "trash")
+                }
+                .disabled(!model.canDeleteLocalFiles)
+                if !entry.isDirectory {
+                    ShareLink(item: entry.url) { Label(L10n.text("Share", "分享"), systemImage: "square.and.arrow.up") }
+                }
+            }
+        }
+    }
+
+    private func entryLabel(_ entry: LocalFileEntry) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: entry.isDirectory ? "folder.fill" : "doc")
+                .foregroundStyle(.indigo)
+                .frame(width: 28)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(entry.name).foregroundStyle(.primary)
+                if !entry.isDirectory {
+                    Text(ByteCountFormatter.string(fromByteCount: entry.fileSize, countStyle: .file))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    @MainActor
+    private func reload() async {
+        do {
+            entries = try await model.localFiles(in: currentDirectory)
+            selected.formIntersection(allIDs)
+            if entries.isEmpty { selecting = false }
+            loadError = nil
+        } catch { loadError = error.localizedDescription }
+        loading = false
     }
 }

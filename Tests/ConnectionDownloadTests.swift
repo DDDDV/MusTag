@@ -52,6 +52,63 @@ final class ConnectionDownloadTests: XCTestCase {
         XCTAssertFalse(manifest.contains(file.id))
     }
 
+    func testDeletingDownloadedFileInvalidatesExistingRepositoryAndAllowsRedownload() async throws {
+        let original = try Data(contentsOf: fixture())
+        let repository = repository()
+        let connection = connection()
+        let file = RemoteFile(id: "/song", name: "Song.mp3", isDirectory: false, size: Int64(original.count))
+        let local = try await repository.accept(stage(original), connection: connection, file: file,
+                                                relativeComponents: ["Album", file.name])
+        let store = AudioFileStore(codec: NativeMetadataCodec(), storageDirectory: state, libraryDirectory: library)
+        let imported = try await store.importFiles(from: [local])
+        try await store.persistLibrary(AudioLibrary(documents: imported.documents, folders: imported.folders))
+        let plan = try await store.prepareDeletion(urls: [local])
+
+        _ = try await store.deleteLocalFiles(plan)
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: local.path))
+        let existing = try await repository.existingFile(connection: connection, file: file)
+        XCTAssertNil(existing, "The live repository must not reuse a deleted download")
+        let manifest = try JSONDecoder().decode([String: String].self,
+                                               from: Data(contentsOf: state.appendingPathComponent("downloads.json")))
+        XCTAssertTrue(manifest.isEmpty)
+
+        let redownloaded = try await repository.accept(stage(original), connection: connection, file: file,
+                                                       relativeComponents: ["Album", file.name])
+        XCTAssertEqual(redownloaded, local, "Deletion should release the original destination name")
+        XCTAssertEqual(try Data(contentsOf: redownloaded), original)
+        let refreshed = try await store.importFiles(from: [redownloaded])
+        XCTAssertEqual(refreshed.documents.count, 1)
+        XCTAssertTrue(refreshed.failures.isEmpty)
+        XCTAssertEqual(try audioFiles(in: library), [redownloaded])
+    }
+
+    func testFolderDeletionDoesNotResurrectOldManifestEntriesWhenAnotherRepositoryWrites() async throws {
+        let original = try Data(contentsOf: fixture())
+        let firstRepository = repository()
+        let otherRepository = repository()
+        let connection = connection()
+        let deleted = RemoteFile(id: "/delete", name: "Delete.mp3", isDirectory: false, size: Int64(original.count))
+        let kept = RemoteFile(id: "/keep", name: "Keep.mp3", isDirectory: false, size: Int64(original.count))
+        let deletedURL = try await firstRepository.accept(stage(original), connection: connection, file: deleted,
+                                                          relativeComponents: ["Deleted Album", deleted.name])
+        _ = try await otherRepository.existingFile(connection: connection, file: deleted)
+        let store = AudioFileStore(codec: NativeMetadataCodec(), storageDirectory: state, libraryDirectory: library)
+        let plan = try await store.prepareDeletion(urls: [deletedURL.deletingLastPathComponent()])
+
+        _ = try await store.deleteLocalFiles(plan)
+        let keptURL = try await otherRepository.accept(stage(original), connection: connection, file: kept,
+                                                       relativeComponents: ["Kept Album", kept.name])
+
+        let manifest = try JSONDecoder().decode([String: String].self,
+                                               from: Data(contentsOf: state.appendingPathComponent("downloads.json")))
+        XCTAssertEqual(manifest.count, 1, "A cached manifest must not rewrite the deleted entry")
+        XCTAssertFalse(manifest.values.contains { $0.contains("Deleted Album") })
+        let available = try await firstRepository.existingFile(connection: connection, file: kept)
+        XCTAssertEqual(available, keptURL, "Repositories must observe each other's latest accepted files")
+        XCTAssertEqual(try audioFiles(in: library), [keptURL])
+    }
+
     func testDifferentRemoteFilesWithSameNameAreBothKept() async throws {
         let original = try Data(contentsOf: fixture())
         let repository = repository()
@@ -295,6 +352,106 @@ final class ConnectionDownloadTests: XCTestCase {
         let existing = try await repository.existingFile(connection: connection, file: file)
         XCTAssertNil(existing)
         XCTAssertTrue(try audioFiles(in: library).isEmpty)
+    }
+
+    func testDeletionLeaseExcludesWritersAndIsScopedToTheActualLibraryRoot() throws {
+        let access = LocalLibraryAccess.shared
+        let firstWriter = try access.acquire(library)
+        let secondWriter = try access.acquire(library)
+        XCTAssertThrowsError(try access.acquire(library, deleting: true))
+        firstWriter.release()
+        XCTAssertThrowsError(try access.acquire(library, deleting: true), "Every active writer must finish")
+        secondWriter.release()
+
+        let deletion = try access.acquire(library, deleting: true)
+        XCTAssertThrowsError(try access.acquire(library))
+        XCTAssertThrowsError(try access.acquire(library, deleting: true))
+        let unrelated = try access.acquire(root.appendingPathComponent("Another Music"), deleting: true)
+        unrelated.release()
+        deletion.release()
+        deletion.release()
+        let reopened = try access.acquire(library)
+        reopened.release()
+    }
+
+    @MainActor
+    func testActiveDownloadBlocksDeletionUntilCancellationFinishes() async throws {
+        let bytes = try Data(contentsOf: fixture())
+        let repository = repository()
+        let connection = connection()
+        let existing = RemoteFile(id: "/existing", name: "Existing.mp3", isDirectory: false, size: Int64(bytes.count))
+        let local = try await repository.accept(stage(bytes), connection: connection, file: existing,
+                                                relativeComponents: [existing.name])
+        let store = AudioFileStore(codec: NativeMetadataCodec(), storageDirectory: state, libraryDirectory: library)
+        let model = AppModel(fileStore: store)
+        await model.load()
+        let started = expectation(description: "Download started")
+        let provider = ConnectionDownloadTestProvider(bytes: bytes, stall: true) { started.fulfill() }
+        let downloading = RemoteFile(id: "/pending", name: "Pending.mp3", isDirectory: false, size: Int64(bytes.count))
+        let downloads = ConnectionDownloads(repository: repository)
+        downloads.start(connection: connection, provider: provider, entries: [downloading], parentNames: [])
+        await fulfillment(of: [started], timeout: 5)
+
+        model.prepareDeletion(urls: [local])
+
+        XCTAssertNil(model.deletionPlan)
+        XCTAssertFalse(model.isPreparingDeletion)
+        XCTAssertNotNil(model.notice)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: local.path))
+        downloads.cancel()
+        try await waitForCompletion(downloads)
+        model.prepareDeletion(urls: [local])
+        try await waitForDeletionPreview(model)
+        XCTAssertNotNil(model.deletionPlan, "Finished cancellation must release the download lease")
+        model.cancelDeletion()
+    }
+
+    @MainActor
+    func testDeletionConfirmationBlocksDownloadsAndWiFiAcceptanceUntilCancelled() async throws {
+        let bytes = try Data(contentsOf: fixture())
+        let repository = repository()
+        let connection = connection()
+        let existing = RemoteFile(id: "/existing", name: "Existing.mp3", isDirectory: false, size: Int64(bytes.count))
+        let local = try await repository.accept(stage(bytes), connection: connection, file: existing,
+                                                relativeComponents: [existing.name])
+        let store = AudioFileStore(codec: NativeMetadataCodec(), storageDirectory: state, libraryDirectory: library)
+        let model = AppModel(fileStore: store)
+        await model.load()
+        model.prepareDeletion(urls: [local])
+        try await waitForDeletionPreview(model)
+        let provider = ConnectionDownloadTestProvider(bytes: bytes)
+        let incoming = RemoteFile(id: "/new", name: "New.mp3", isDirectory: false, size: Int64(bytes.count))
+        let downloads = ConnectionDownloads(repository: repository)
+
+        downloads.start(connection: connection, provider: provider, entries: [incoming], parentNames: [])
+
+        XCTAssertFalse(downloads.isRunning)
+        XCTAssertFalse(downloads.failures.isEmpty)
+        let attemptedDestinations = await provider.destinations
+        XCTAssertTrue(attemptedDestinations.isEmpty, "An unconfirmed deletion must prevent a new transfer from starting")
+        let wifiStage = try stage(bytes)
+        do {
+            _ = try await repository.acceptWiFi(wifiStage, relativePath: "WiFi.mp3", expectedSize: Int64(bytes.count))
+            XCTFail("WiFi acceptance must use the same deletion gate")
+        } catch { }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: wifiStage.path))
+        XCTAssertEqual(try audioFiles(in: library), [local])
+
+        model.cancelDeletion()
+        downloads.start(connection: connection, provider: provider, entries: [incoming], parentNames: [])
+        try await waitForCompletion(downloads)
+        XCTAssertTrue(downloads.failures.isEmpty)
+        XCTAssertEqual(downloads.completed, 1)
+        let completedDestinations = await provider.destinations
+        XCTAssertEqual(completedDestinations.count, 1)
+        XCTAssertEqual(try audioFiles(in: library).count, 2)
+    }
+
+    @MainActor
+    private func waitForDeletionPreview(_ model: AppModel) async throws {
+        let deadline = Date().addingTimeInterval(5)
+        while model.isPreparingDeletion, Date() < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertNotNil(model.deletionPlan, model.notice ?? "No deletion preview")
     }
 
     private func repository() -> LocalDownloadRepository {

@@ -16,7 +16,9 @@ actor LocalDownloadRepository {
     }
 
     func sourceDirectory(_ connection: RemoteConnection) throws -> URL {
-        try directory(["Connections", ConnectionPaths.component(connection.name) + "-" + connection.id.uuidString.prefix(8)])
+        let lease = try LocalLibraryAccess.shared.acquire(libraryDirectory)
+        defer { lease.release() }
+        return try directory(["Connections", ConnectionPaths.component(connection.name) + "-" + connection.id.uuidString.prefix(8)])
     }
 
     nonisolated func importRoots(for urls: [URL]) -> [URL] {
@@ -44,6 +46,8 @@ actor LocalDownloadRepository {
     }
 
     func checkBatchSpace(totalSize: Int64, largestFile: Int64) throws {
+        let lease = try LocalLibraryAccess.shared.acquire(libraryDirectory)
+        defer { lease.release() }
         try rejectSymlink(libraryDirectory)
         try manager.createDirectory(at: libraryDirectory, withIntermediateDirectories: true)
         let capacity = try libraryDirectory.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
@@ -59,6 +63,8 @@ actor LocalDownloadRepository {
 
     func accept(_ temporaryURL: URL, connection: RemoteConnection, file: RemoteFile,
                 relativeComponents: [String]) throws -> URL {
+        let lease = try LocalLibraryAccess.shared.acquire(libraryDirectory)
+        defer { lease.release() }
         try Task.checkCancellation()
         if let existing = try existingFile(connection: connection, file: file) { return existing }
         try validateAudio(temporaryURL, expectedSize: file.size)
@@ -77,6 +83,8 @@ actor LocalDownloadRepository {
     }
 
     func acceptWiFi(_ temporaryURL: URL, relativePath: String, expectedSize: Int64) throws -> URL {
+        let lease = try LocalLibraryAccess.shared.acquire(libraryDirectory)
+        defer { lease.release() }
         try Task.checkCancellation()
         let components = try ConnectionPaths.validateRelativePath(relativePath)
         guard let name = components.last,
@@ -103,7 +111,8 @@ actor LocalDownloadRepository {
     }
 
     private func loadManifest() throws {
-        guard manifest == nil else { return }
+        // Deletion and other repository instances update the shared index atomically.
+        // Reload before using it so a stale in-memory map cannot resurrect entries.
         manifest = manager.fileExists(atPath: stateURL.path)
             ? try JSONDecoder().decode([String: String].self, from: Data(contentsOf: stateURL)) : [:]
     }
@@ -202,6 +211,9 @@ final class ConnectionDownloads: ObservableObject {
     func start(connection: RemoteConnection, provider: any RemoteFileProvider,
                entries: [RemoteFile], parentNames: [String]) {
         guard !isRunning else { return }
+        let lease: LocalLibraryAccess.Lease
+        do { lease = try LocalLibraryAccess.shared.acquire(repository.libraryDirectory) }
+        catch { failures = [error.localizedDescription]; summary = error.localizedDescription; return }
         isRunning = true
         isScanning = true
         failures = []
@@ -212,6 +224,7 @@ final class ConnectionDownloads: ObservableObject {
             var downloaded: [URL] = []
             defer {
                 isRunning = false; isScanning = false; task = nil; currentName = ""
+                lease.release()
                 if !downloaded.isEmpty {
                     NotificationCenter.default.post(name: .musTagLocalFilesAdded, object: nil,
                                                     userInfo: ["urls": repository.importRoots(for: downloaded)])
@@ -261,7 +274,7 @@ final class ConnectionDownloads: ObservableObject {
                 }
                 summary = total == 0
                     ? L10n.text("No MP3, FLAC or M4A files found.", "没有找到 MP3、FLAC 或 M4A 文件。")
-                    : L10n.text("\(downloaded.count) files ready locally. \(failures.count) errors. Find the files in MusTag → Music in Files.", "\(downloaded.count) 个文件已就绪，\(failures.count) 项失败。可在“文件”App 的 MusTag → Music 中查看。")
+                    : L10n.text("\(downloaded.count) files ready locally. \(failures.count) errors. Edit on Home, or manage and delete in Connections → Local music folder.", "\(downloaded.count) 个文件已就绪，\(failures.count) 项失败。可在首页编辑，或前往“连接”→“本机音乐文件夹”管理和删除。")
             } catch is CancellationError {
                 summary = L10n.text("Cancelled. Completed downloads were kept; select the same items to retry the rest.", "已取消。完成的文件已保留，重新选择相同项目可重试其余文件。")
             } catch {

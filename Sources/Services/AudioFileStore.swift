@@ -1,4 +1,5 @@
 import CryptoKit
+import Darwin
 import Foundation
 
 /// Imports sources as permanent local copies. External source files are read only.
@@ -41,6 +42,7 @@ actor AudioFileStore {
     private var backupDirectory: URL { storageDirectory.appendingPathComponent("Backups", isDirectory: true) }
     private var stagingDirectory: URL { storageDirectory.appendingPathComponent("Staging", isDirectory: true) }
     private var importsURL: URL { storageDirectory.appendingPathComponent("imports.json") }
+    private var deletionURL: URL { storageDirectory.appendingPathComponent("pending-deletion.json") }
 
     private struct ImportLocations: Codable {
         var files: [String: String] = [:]
@@ -423,6 +425,7 @@ actor AudioFileStore {
 
     func loadLibrary() throws -> AudioLibrary {
         try prepareStorage()
+        try recoverPendingDeletion()
         var library = try readLibrary()
         let libraryIndex = ImportLibraryIndex(library)
         var locations = try readImportLocations(library: library)
@@ -509,6 +512,268 @@ actor AudioFileStore {
     func persistLibrary(_ library: AudioLibrary) throws {
         try prepareStorage()
         try writeJSON(library, to: documentsURL)
+    }
+
+    func localFiles(in directory: URL) throws -> [LocalFileEntry] {
+        try prepareStorage()
+        let directory = try validatedLibraryURL(directory)
+        let attributes = try manager.attributesOfItem(atPath: directory.path)
+        guard attributes[.type] as? FileAttributeType == .typeDirectory else { throw localImportRequired() }
+        return try manager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil).compactMap { url in
+            // Do not expose links as navigable folders or deletable files.
+            let attributes = try manager.attributesOfItem(atPath: url.path)
+            let type = attributes[.type] as? FileAttributeType
+            guard type == .typeRegular || type == .typeDirectory else { return nil }
+            let validated = try validatedLibraryURL(url)
+            return LocalFileEntry(relativePath: try relativeLibraryPath(validated), url: validated,
+                                  isDirectory: type == .typeDirectory,
+                                  fileSize: type == .typeRegular ? (attributes[.size] as? NSNumber)?.int64Value ?? 0 : 0)
+        }.sorted {
+            if $0.isDirectory != $1.isDirectory { return $0.isDirectory }
+            return $0.name.localizedStandardCompare($1.name) == .orderedAscending
+        }
+    }
+
+    func backupAudioExists(_ backup: BackupRecord) -> Bool {
+        // Match restore()'s migration path for older backups whose originalURL
+        // still identifies the external source instead of its imported copy.
+        if backup.libraryRelativePath == nil,
+           let document = try? readLibrary().documents.first(where: { $0.id == backup.documentID }),
+           let relativePath = document.libraryRelativePath {
+            return (try? ownedURL(for: document.url, relativePath: relativePath, bookmark: document.bookmark)) != nil
+        }
+        return (try? ownedURL(for: backup.originalURL, relativePath: backup.libraryRelativePath,
+                              bookmark: backup.bookmark)) != nil
+    }
+
+    func prepareDeletion(urls: [URL]) throws -> LocalDeletionPlan {
+        try prepareStorage()
+        try recoverPendingDeletion()
+        let library = try readLibrary()
+        let knownFolders = Set(library.folders.compactMap { localRecordPath($0.url, relativePath: $0.libraryRelativePath) })
+        var roots: [URL] = []
+        for url in Array(Set(urls.map(\.standardizedFileURL))).sorted(by: { $0.pathComponents.count < $1.pathComponents.count }) {
+            let local = try validatedLibraryURL(url)
+            guard local != libraryDirectory else { throw deletionError() }
+            if roots.contains(where: { local.pathComponents.starts(with: $0.pathComponents) }) { continue }
+            roots.append(local)
+        }
+        guard !roots.isEmpty else { throw deletionError() }
+        var entries: [LocalDeletionEntry] = []
+        func snapshot(_ url: URL) throws {
+            try Task.checkCancellation()
+            let local = try validatedLibraryURL(url)
+            let path = try relativeLibraryPath(local)
+            guard !path.isEmpty else { throw deletionError() }
+            guard let item = try deletionIdentity(at: local) else {
+                entries.append(LocalDeletionEntry(relativePath: path,
+                                                  isDirectory: knownFolders.contains(path) || url.hasDirectoryPath,
+                                                  identity: nil))
+                return
+            }
+            entries.append(LocalDeletionEntry(relativePath: path, isDirectory: item.isDirectory, identity: item.identity))
+            if item.isDirectory {
+                for child in try manager.contentsOfDirectory(at: local, includingPropertiesForKeys: nil) {
+                    try snapshot(child)
+                }
+            }
+        }
+        for root in roots { try snapshot(root) }
+        guard let identity = try deletionIdentity(at: libraryDirectory), identity.isDirectory else { throw deletionError() }
+        return LocalDeletionPlan(roots: roots, rootIdentity: identity.identity, entries: entries)
+    }
+
+    func deleteLocalFiles(_ plan: LocalDeletionPlan) throws -> LocalDeletionResult {
+        try prepareStorage()
+        try recoverPendingDeletion()
+        try validateDeletionPlan(plan)
+        // Decode all affected indexes before deleting bytes. Corrupt metadata
+        // must not turn an otherwise harmless request into an untracked delete.
+        _ = try readLibrary()
+        _ = try readDeletionImportLocations()
+        _ = try readDownloadLocations()
+        try writeJSON(plan, to: deletionURL)
+        return try executeDeletion(plan)
+    }
+
+    private func recoverPendingDeletion() throws {
+        guard manager.fileExists(atPath: deletionURL.path) else { return }
+        _ = try validatedOwnedURL(deletionURL, root: storageDirectory, requireRegularFile: true)
+        let plan = try JSONDecoder().decode(LocalDeletionPlan.self, from: Data(contentsOf: deletionURL))
+        _ = try executeDeletion(plan)
+    }
+
+    private func validateDeletionPlan(_ plan: LocalDeletionPlan) throws {
+        guard !plan.entries.isEmpty,
+              Set(plan.entries.map(\.relativePath)).count == plan.entries.count,
+              let root = try deletionIdentity(at: libraryDirectory), root.isDirectory,
+              plan.rootIdentity.matches(root.identity, isDirectory: true) else { throw deletionError() }
+        for entry in plan.entries {
+            guard !entry.relativePath.isEmpty else { throw deletionError() }
+            _ = try libraryURL(relativePath: entry.relativePath)
+        }
+    }
+
+    private func executeDeletion(_ plan: LocalDeletionPlan) throws -> LocalDeletionResult {
+        try validateDeletionPlan(plan)
+        var library = try readLibrary()
+        var locations = try readDeletionImportLocations()
+        var downloads = try readDownloadLocations()
+        var deleted = Set<String>()
+        var deletedDirectories = Set<String>()
+        var deletedFileCount = 0
+        var deletedFolderCount = 0
+        var failures: [String] = []
+        let directorySnapshots = Dictionary(uniqueKeysWithValues: plan.entries.filter(\.isDirectory).map { ($0.relativePath, $0) })
+        // Children go first, and rmdir below removes only empty directories.
+        // Newly added files therefore survive without being covered by this plan.
+        let entries = plan.entries.sorted {
+            let left = $0.relativePath.split(separator: "/").count
+            let right = $1.relativePath.split(separator: "/").count
+            if left != right { return left > right }
+            return !$0.isDirectory && $1.isDirectory
+        }
+        for entry in entries {
+            do {
+                try coordinatedDelete(entry, rootIdentity: plan.rootIdentity, directories: directorySnapshots)
+                deleted.insert(entry.relativePath)
+                if entry.isDirectory { deletedDirectories.insert(entry.relativePath); deletedFolderCount += 1 }
+                else { deletedFileCount += 1 }
+            } catch {
+                failures.append(entry.relativePath + ": " + error.localizedDescription)
+            }
+        }
+        func wasDeleted(_ path: String) -> Bool {
+            deleted.contains(path) || deletedDirectories.contains { path.hasPrefix($0 + "/") }
+        }
+        library.documents.removeAll { document in
+            localRecordPath(document.url, relativePath: document.libraryRelativePath).map(wasDeleted) ?? false
+        }
+        let removedFolderIDs = Set(library.folders.filter { folder in
+            localRecordPath(folder.url, relativePath: folder.libraryRelativePath).map(wasDeleted) ?? false
+        }.map(\.id))
+        library.folders.removeAll { removedFolderIDs.contains($0.id) }
+        for index in library.documents.indices {
+            library.documents[index].importFolderIDs?.subtract(removedFolderIDs)
+        }
+        locations.files = locations.files.filter { !wasDeleted($0.value) }
+        locations.folders = locations.folders.filter { !wasDeleted($0.value) }
+        downloads = downloads.filter { !wasDeleted($0.value) }
+        // The intent remains durable until every index is updated. Replaying
+        // absent files after a crash is safe and completes these writes.
+        try writeJSON(library, to: documentsURL)
+        try writeJSON(locations, to: importsURL)
+        try writeJSON(downloads, to: storageDirectory.appendingPathComponent("downloads.json"))
+        try manager.removeItem(at: deletionURL)
+        return LocalDeletionResult(library: library, deletedPaths: deleted,
+                                   deletedFileCount: deletedFileCount, deletedFolderCount: deletedFolderCount,
+                                   failures: failures)
+    }
+
+    private func readDeletionImportLocations() throws -> ImportLocations {
+        guard manager.fileExists(atPath: importsURL.path) else { return ImportLocations() }
+        _ = try validatedOwnedURL(importsURL, root: storageDirectory, requireRegularFile: true)
+        return try JSONDecoder().decode(ImportLocations.self, from: Data(contentsOf: importsURL))
+    }
+
+    private func readDownloadLocations() throws -> [String: String] {
+        let url = storageDirectory.appendingPathComponent("downloads.json")
+        guard manager.fileExists(atPath: url.path) else { return [:] }
+        _ = try validatedOwnedURL(url, root: storageDirectory, requireRegularFile: true)
+        return try JSONDecoder().decode([String: String].self, from: Data(contentsOf: url))
+    }
+
+    private func localRecordPath(_ url: URL, relativePath: String?) -> String? {
+        if let relativePath { return relativePath }
+        guard isLibraryLocation(url) else { return nil }
+        return url.standardizedFileURL.pathComponents.dropFirst(libraryDirectory.pathComponents.count).joined(separator: "/")
+    }
+
+    private func deletionIdentity(at url: URL) throws -> (identity: LocalFileIdentity, isDirectory: Bool)? {
+        var information = stat()
+        guard lstat(url.path, &information) == 0 else {
+            if errno == ENOENT { return nil }
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+        }
+        let type = information.st_mode & S_IFMT
+        guard type == S_IFREG || type == S_IFDIR else { throw deletionError() }
+        return (identity(information), type == S_IFDIR)
+    }
+
+    private func identity(_ information: stat) -> LocalFileIdentity {
+        LocalFileIdentity(device: UInt64(bitPattern: Int64(information.st_dev)), inode: UInt64(information.st_ino),
+                          size: Int64(information.st_size), modifiedSeconds: Int64(information.st_mtimespec.tv_sec),
+                          modifiedNanoseconds: Int64(information.st_mtimespec.tv_nsec))
+    }
+
+    private func coordinatedDelete(_ entry: LocalDeletionEntry, rootIdentity: LocalFileIdentity,
+                                   directories: [String: LocalDeletionEntry]) throws {
+        let url = try libraryURL(relativePath: entry.relativePath)
+        // A disappeared folder/file is a successful cleanup, but a replaced
+        // ancestor must not redirect the request into a different tree.
+        var coordinationError: NSError?
+        var result: Result<Void, Error>?
+        NSFileCoordinator().coordinate(writingItemAt: url, options: .forDeleting, error: &coordinationError) { coordinated in
+            result = Result {
+                guard coordinated.standardizedFileURL == url.standardizedFileURL else { throw deletionError() }
+                try unlinkSnapshot(entry, rootIdentity: rootIdentity, directories: directories)
+            }
+        }
+        if let coordinationError { throw coordinationError }
+        guard let result else { throw deletionError() }
+        try result.get()
+    }
+
+    private func unlinkSnapshot(_ entry: LocalDeletionEntry, rootIdentity: LocalFileIdentity,
+                                directories: [String: LocalDeletionEntry]) throws {
+        _ = try validatedLibraryURL(libraryDirectory)
+        var descriptor = open(libraryDirectory.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
+        guard descriptor >= 0 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
+        defer { close(descriptor) }
+        var rootInfo = stat()
+        guard fstat(descriptor, &rootInfo) == 0,
+              rootIdentity.matches(identity(rootInfo), isDirectory: true) else { throw deletionError() }
+        let parts = entry.relativePath.split(separator: "/").map(String.init)
+        var parentPath = ""
+        for part in parts.dropLast() {
+            let next = openat(descriptor, part, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
+            guard next >= 0 else {
+                if errno == ENOENT { return }
+                throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+            }
+            close(descriptor)
+            descriptor = next
+            parentPath += parentPath.isEmpty ? part : "/" + part
+            if let snapshot = directories[parentPath] {
+                var information = stat()
+                guard fstat(descriptor, &information) == 0, let previous = snapshot.identity,
+                      previous.matches(identity(information), isDirectory: true) else { throw deletionChanged() }
+            }
+        }
+        guard let name = parts.last else { throw deletionError() }
+        var information = stat()
+        guard fstatat(descriptor, name, &information, AT_SYMLINK_NOFOLLOW) == 0 else {
+            if errno == ENOENT { return }
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+        }
+        let expectedType = entry.isDirectory ? S_IFDIR : S_IFREG
+        guard information.st_mode & S_IFMT == expectedType, let previous = entry.identity,
+              previous.matches(identity(information), isDirectory: entry.isDirectory) else { throw deletionChanged() }
+        guard unlinkat(descriptor, name, entry.isDirectory ? AT_REMOVEDIR : 0) == 0 else {
+            if errno == ENOENT { return }
+            if errno == ENOTEMPTY { throw deletionChanged() }
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+        }
+    }
+
+    private func deletionError() -> MusTagError {
+        message("Only regular files and folders inside MusTag's Music folder can be deleted. Symbolic links are not supported.",
+                "只能删除 MusTag 的 Music 文件夹内的普通文件和文件夹，不支持符号链接。")
+    }
+
+    private func deletionChanged() -> MusTagError {
+        message("This item changed after the deletion preview. Review it again before deleting.",
+                "此项目在删除预览后发生了变化，请重新确认后删除。")
     }
 
     private func importOne(_ source: URL, folderID: String? = nil, locations: inout ImportLocations,

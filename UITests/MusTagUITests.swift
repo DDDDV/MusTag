@@ -455,6 +455,186 @@ final class MusTagUITests: XCTestCase {
         XCTAssertFalse(remove.exists)
     }
 
+    func testSingleLocalFileDeletionCanBeCancelledThenConfirmed() {
+        launchWithAudio()
+        let row = app.buttons["audioRow_UI Test.m4a"]
+        XCTAssertTrue(row.waitForExistence(timeout: 15))
+        row.swipeLeft()
+        let delete = app.buttons["songDelete_UI Test.m4a"]
+        XCTAssertTrue(delete.waitForExistence(timeout: 3))
+        delete.tap()
+        let confirm = app.buttons["confirmLocalDeleteButton"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "localDeletionSummary").firstMatch.exists)
+        app.buttons["cancelLocalDeleteButton"].tap()
+        XCTAssertTrue(row.waitForExistence(timeout: 3))
+
+        row.swipeLeft()
+        XCTAssertTrue(delete.waitForExistence(timeout: 3))
+        delete.tap()
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5))
+        capture("local-delete-single-confirmation")
+        confirm.tap()
+        dismissDeletionNotice()
+        let welcome = app.descendants(matching: .any).matching(identifier: "welcomeScreen").firstMatch
+        XCTAssertTrue(welcome.waitForExistence(timeout: 8))
+        XCTAssertFalse(row.exists)
+    }
+
+    func testMixedBatchDeletionRemovesFilesAndAllFoldersIncludingEmptyAfterRelaunch() {
+        app.launchEnvironment["MUSTAG_UI_TEST_LIBRARY_ID"] = UUID().uuidString
+        launchWithFolders()
+        XCTAssertTrue(app.buttons["folderRow_Music Folder"].waitForExistence(timeout: 15))
+        app.buttons["librarySelectButton"].tap()
+        let delete = app.buttons["batchDeleteButton"]
+        XCTAssertTrue(delete.exists)
+        XCTAssertFalse(delete.isEnabled)
+        app.buttons["selectAllButton"].tap()
+        XCTAssertEqual(app.staticTexts["selectedCountLabel"].label, "4 selected")
+        XCTAssertTrue(app.staticTexts["selectedFolderCountLabel"].exists)
+        XCTAssertTrue(delete.isEnabled)
+        delete.tap()
+        let confirm = app.buttons["confirmLocalDeleteButton"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5))
+        capture("local-delete-mixed-batch-confirmation")
+        confirm.tap()
+        dismissDeletionNotice()
+        let welcome = app.descendants(matching: .any).matching(identifier: "welcomeScreen").firstMatch
+        XCTAssertTrue(welcome.waitForExistence(timeout: 8))
+        XCTAssertFalse(app.buttons["folderRow_Empty Folder"].exists)
+        XCTAssertFalse(app.buttons["audioRow_UI Test.m4a"].exists)
+
+        app.terminate()
+        app.launchArguments.removeAll { $0 == "--ui-testing-with-folders" }
+        app.launch()
+        XCTAssertTrue(welcome.waitForExistence(timeout: 15))
+        XCTAssertFalse(app.buttons["folderRow_Music Folder"].exists)
+        XCTAssertFalse(app.buttons["folderRow_Other Folder"].exists)
+        XCTAssertFalse(app.buttons["folderRow_Empty Folder"].exists)
+        XCTAssertFalse(app.buttons["audioRow_UI Test.m4a"].exists)
+    }
+
+    func testBatchFolderDeletionIncludesEmptyFolderAndPreservesUnselectedMusic() {
+        launchWithFolders()
+        XCTAssertTrue(app.buttons["folderRow_Music Folder"].waitForExistence(timeout: 15))
+        app.buttons["librarySelectButton"].tap()
+        app.buttons["folderSelection_Music Folder"].tap()
+        app.buttons["folderSelection_Empty Folder"].tap()
+        let delete = app.buttons["batchDeleteButton"]
+        XCTAssertTrue(delete.isEnabled)
+        delete.tap()
+        let confirm = app.buttons["confirmLocalDeleteButton"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5))
+        confirm.tap()
+        dismissDeletionNotice()
+
+        let musicFolder = app.buttons["folderRow_Music Folder"]
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: musicFolder)
+        waitForExpectations(timeout: 5)
+        XCTAssertFalse(app.buttons["folderRow_Empty Folder"].exists)
+        XCTAssertTrue(app.buttons["audioRow_UI Test.m4a"].exists)
+        let other = app.buttons["folderRow_Other Folder"]
+        XCTAssertTrue(other.exists)
+        other.tap()
+        XCTAssertTrue(app.buttons["audioRow_Other Track.m4a"].waitForExistence(timeout: 5))
+    }
+
+    func testLocalFileBrowserDeletesSongPreviouslyRemovedFromLibrary() {
+        launchWithAudio()
+        let row = app.buttons["audioRow_UI Test.m4a"]
+        XCTAssertTrue(row.waitForExistence(timeout: 15))
+        app.buttons["librarySelectButton"].tap()
+        app.buttons["selectAllButton"].tap()
+        app.buttons["batchRemoveButton"].tap()
+        let remove = app.buttons["confirmRemoveButton"]
+        XCTAssertTrue(remove.waitForExistence(timeout: 3))
+        remove.tap()
+        let welcome = app.descendants(matching: .any).matching(identifier: "welcomeScreen").firstMatch
+        XCTAssertTrue(welcome.waitForExistence(timeout: 5))
+
+        app.tabBars.buttons["Connections"].tap()
+        app.buttons["connectionLocalFolderButton"].tap()
+        let imported = app.buttons["localFileRow_Imported Files"]
+        XCTAssertTrue(imported.waitForExistence(timeout: 5))
+        imported.tap()
+        let importSource = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "localFileRow_")).firstMatch
+        XCTAssertTrue(importSource.waitForExistence(timeout: 5))
+        importSource.tap()
+        let localSong = app.descendants(matching: .any).matching(identifier: "localFileRow_UI Test.m4a").firstMatch
+        XCTAssertTrue(localSong.waitForExistence(timeout: 5), "Removing a list record must leave the local audio discoverable")
+        app.buttons["localFilesSelectButton"].tap()
+        app.buttons["localFileSelection_UI Test.m4a"].tap()
+        app.buttons["localFilesBatchDeleteButton"].tap()
+        let confirm = app.buttons["confirmLocalDeleteButton"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5))
+        confirm.tap()
+        dismissDeletionNotice()
+        let empty = app.descendants(matching: .any).matching(identifier: "localFilesEmptyState").firstMatch
+        XCTAssertTrue(empty.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["localFileSelection_UI Test.m4a"].exists)
+        app.tabBars.buttons["Home"].tap()
+        XCTAssertTrue(welcome.waitForExistence(timeout: 5))
+    }
+
+    func testEditorDeletionReturnsToLibrary() {
+        launchWithAudio()
+        let row = app.buttons["audioRow_UI Test.m4a"]
+        XCTAssertTrue(row.waitForExistence(timeout: 15))
+        row.tap()
+        let more = app.buttons["trackMoreButton"]
+        XCTAssertTrue(more.waitForExistence(timeout: 5))
+        more.tap()
+        app.buttons["trackDeleteButton"].tap()
+        let confirm = app.buttons["confirmLocalDeleteButton"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5))
+        confirm.tap()
+        dismissDeletionNotice()
+
+        let welcome = app.descendants(matching: .any).matching(identifier: "welcomeScreen").firstMatch
+        XCTAssertTrue(welcome.waitForExistence(timeout: 8), "Deleting the edited file should return to the library")
+        XCTAssertFalse(app.navigationBars["Edit tags"].exists)
+        XCTAssertFalse(row.exists)
+    }
+
+    func testImportSourcesSheetCanDeleteLocalFolderAndReturnToWelcome() {
+        launchWithAudio()
+        XCTAssertTrue(app.buttons["audioRow_UI Test.m4a"].waitForExistence(timeout: 15))
+        app.buttons["librarySelectButton"].tap()
+        app.buttons["selectAllButton"].tap()
+        app.buttons["batchRemoveButton"].tap()
+        let remove = app.buttons["confirmRemoveButton"]
+        XCTAssertTrue(remove.waitForExistence(timeout: 3))
+        remove.tap()
+        let welcome = app.descendants(matching: .any).matching(identifier: "welcomeScreen").firstMatch
+        XCTAssertTrue(welcome.waitForExistence(timeout: 5))
+        app.buttons["addAudioButton"].firstMatch.tap()
+        let importNavigation = app.navigationBars["Import music"]
+        XCTAssertTrue(importNavigation.waitForExistence(timeout: 3))
+        app.buttons["connectionLocalFolderButton"].tap()
+        XCTAssertTrue(app.buttons["localFileRow_Imported Files"].waitForExistence(timeout: 5))
+        app.buttons["localFilesSelectButton"].tap()
+        app.buttons["localFileSelection_Imported Files"].tap()
+        app.buttons["localFilesBatchDeleteButton"].tap()
+        let confirm = app.buttons["confirmLocalDeleteButton"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5), "A deletion confirmation must present above the import sheet")
+        capture("local-delete-inside-import-sheet")
+        confirm.tap()
+        dismissDeletionNotice()
+
+        let empty = app.descendants(matching: .any).matching(identifier: "localFilesEmptyState").firstMatch
+        XCTAssertTrue(empty.waitForExistence(timeout: 5))
+        app.navigationBars["Local files"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(importNavigation.waitForExistence(timeout: 3), "Deleting must preserve the enclosing import sheet")
+        app.buttons["importSourcesDoneButton"].tap()
+        XCTAssertTrue(welcome.waitForExistence(timeout: 5))
+    }
+
+    private func dismissDeletionNotice() {
+        let notice = app.alerts["Notice"]
+        XCTAssertTrue(notice.waitForExistence(timeout: 8))
+        notice.buttons["OK"].tap()
+    }
+
     func testMissingKeyCanBeConfiguredWithoutNetwork() {
         app.tabBars.buttons["Settings"].tap()
         selectRecognitionService("AcoustID")
@@ -538,8 +718,8 @@ final class MusTagUITests: XCTestCase {
         XCTAssertTrue(localFiles.waitForExistence(timeout: 3))
         localFiles.tap()
         XCTAssertTrue(app.navigationBars["Local files"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(
-            format: "label CONTAINS %@", "Files → On My iPhone/iPad → MusTag → Music")).firstMatch.exists)
+        XCTAssertTrue(app.buttons["localFileRow_Imported Files"].waitForExistence(timeout: 5),
+                      "Local files must show the saved audio's actual containing folder")
         XCTAssertTrue(app.buttons["refreshLocalFilesButton"].exists)
         capture("16-saved-audio-local-location")
         app.tabBars.buttons["Home"].tap()

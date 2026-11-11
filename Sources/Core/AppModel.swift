@@ -24,6 +24,11 @@ final class AppModel: ObservableObject {
     @Published var appliedCandidateIDs: [UUID: String] = [:]
     @Published var appliedReleaseChoices: [UUID: CandidateReleaseChoice] = [:]
     @Published var backupRecords: [BackupRecord] = []
+    @Published private(set) var missingBackupAudioIDs: Set<UUID> = []
+    @Published var deletionPlan: LocalDeletionPlan?
+    @Published var isShowingImportSources = false
+    @Published private(set) var isPreparingDeletion = false
+    @Published private(set) var localFilesRevision = 0
     @Published var apiKey = APIKeyStore.load()
     @Published var recognitionProvider: RecognitionProvider {
         didSet {
@@ -46,6 +51,11 @@ final class AppModel: ObservableObject {
     private let preferences: UserDefaults
     private var operationTask: Task<Void, Never>?
     private var persistenceTask: Task<Void, Never>?
+    private var activityLease: LocalLibraryAccess.Lease?
+    private var deletionLease: LocalLibraryAccess.Lease?
+    private var deletionPreparationTask: Task<Void, Never>?
+    private var deletionRequestID: UUID?
+    private var isDeletingLocalFiles = false
     // Bound the entire pipeline, including decoding, metadata and artwork, per file.
     // This is an app resource limit, not a published Shazam service quota.
     private static let shazamRecognitionConcurrency = 3
@@ -122,8 +132,10 @@ final class AppModel: ObservableObject {
         }
     }
 
-    var isWorking: Bool { operation != nil }
+    var isWorking: Bool { operation != nil || isPreparingDeletion || deletionPlan != nil }
     var localLibraryDirectory: URL { fileStore.libraryDirectory }
+    var canDeleteLocalFiles: Bool { libraryLoadState == .ready && !isWorking && deletionLease == nil }
+    var canCancelOperation: Bool { operation != nil && !isDeletingLocalFiles }
 
     func enqueueLocalImports(_ urls: [URL]) {
         pendingLocalImports.append(contentsOf: urls)
@@ -159,6 +171,8 @@ final class AppModel: ObservableObject {
         libraryLoadState = .loading
         defer { isLoadingLibrary = false }
         do {
+            let lease = try LocalLibraryAccess.shared.acquire(localLibraryDirectory, deleting: true)
+            defer { lease.release() }
             #if DEBUG
             if Self.isUITesting, uiTestDirectory != nil,
                ProcessInfo.processInfo.arguments.contains("--ui-testing-delay-library-load") {
@@ -169,8 +183,7 @@ final class AppModel: ObservableObject {
             documents = library.documents
             folders = library.folders
             // A backup-index error must not disable an otherwise readable library.
-            do { backupRecords = try await fileStore.backups() }
-            catch { notice = error.localizedDescription }
+            await refreshBackups()
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("--ui-testing-with-folders"),
                let directory = uiTestDirectory {
@@ -214,8 +227,11 @@ final class AppModel: ObservableObject {
             }
             #endif
             canPersist = true
-            if uiTestDirectory != nil { await persistNow() }
+            if uiTestDirectory != nil {
+                try await fileStore.persistLibrary(AudioLibrary(documents: documents, folders: folders))
+            }
             libraryLoadState = .ready
+            lease.release()
             drainLocalImports()
         } catch {
             libraryLoadState = .failed(error.localizedDescription)
@@ -224,6 +240,115 @@ final class AppModel: ObservableObject {
 
     func document(_ id: UUID) -> AudioDocument? {
         documents.first { $0.id == id }
+    }
+
+    func localFiles(in directory: URL) async throws -> [LocalFileEntry] {
+        try await fileStore.localFiles(in: directory)
+    }
+
+    /// Resolve model IDs to owned paths before presenting a snapshot for confirmation.
+    func prepareDeletion(documentIDs: Set<UUID> = [], folderIDs: Set<String> = [], urls: [URL] = []) {
+        guard canDeleteLocalFiles else { return }
+        var targets = urls
+        targets += documents.filter { documentIDs.contains($0.id) }.map(\.url)
+        targets += folders.filter { folderIDs.contains($0.id) }.map(\.url)
+        guard !targets.isEmpty else { return }
+        do { deletionLease = try LocalLibraryAccess.shared.acquire(localLibraryDirectory, deleting: true) }
+        catch { notice = error.localizedDescription; return }
+        notice = nil
+        isPreparingDeletion = true
+        let requestID = UUID()
+        deletionRequestID = requestID
+        deletionPreparationTask = Task {
+            do {
+                try await fileStore.persistLibrary(AudioLibrary(documents: documents, folders: folders))
+                let plan = try await fileStore.prepareDeletion(urls: targets)
+                guard deletionRequestID == requestID, !Task.isCancelled else { return }
+                isPreparingDeletion = false
+                deletionPlan = plan
+            } catch {
+                guard deletionRequestID == requestID else { return }
+                cancelDeletion()
+                if !(error is CancellationError) { notice = error.localizedDescription }
+            }
+        }
+    }
+
+    func cancelDeletion() {
+        guard !isDeletingLocalFiles else { return }
+        deletionRequestID = nil
+        deletionPreparationTask?.cancel()
+        deletionPreparationTask = nil
+        deletionPlan = nil
+        isPreparingDeletion = false
+        deletionLease?.release()
+        deletionLease = nil
+        schedulePersistence()
+        drainLocalImports()
+    }
+
+    func confirmDeletion() {
+        guard let plan = deletionPlan, deletionLease != nil, operation == nil, !isPreparingDeletion else { return }
+        deletionPlan = nil
+        deletionRequestID = nil
+        deletionPreparationTask = nil
+        isDeletingLocalFiles = true
+        persistenceTask?.cancel()
+        notice = nil
+        operation = L10n.text("Deleting local files", "正在删除本地文件")
+        totalCount = plan.fileCount + plan.folderCount
+        completedCount = 0
+        operationTask = Task {
+            defer {
+                isDeletingLocalFiles = false
+                deletionLease?.release()
+                deletionLease = nil
+                finish()
+            }
+            do {
+                // Flush current drafts once; scene/debounce writes are blocked until
+                // the resulting library has replaced the in-memory snapshot.
+                try await fileStore.persistLibrary(AudioLibrary(documents: documents, folders: folders))
+                let result = try await fileStore.deleteLocalFiles(plan)
+                applyDeletedLibrary(result.library)
+                completedCount = result.deletedFileCount + result.deletedFolderCount
+                let deletedURLs = Set(result.deletedPaths.map { localLibraryDirectory.appendingPathComponent($0).standardizedFileURL })
+                pendingLocalImports.removeAll { url in
+                    let path = url.standardizedFileURL.pathComponents
+                    return deletedURLs.contains { path.starts(with: $0.pathComponents) }
+                }
+                await refreshBackups()
+                notice = L10n.text(
+                    "Deleted \(result.deletedFileCount) files and \(result.deletedFolderCount) folders.",
+                    "已删除 \(result.deletedFileCount) 个文件、\(result.deletedFolderCount) 个文件夹。")
+                if !result.failures.isEmpty {
+                    notice! += "\n" + L10n.text("Some items were kept:", "以下项目未删除：") + "\n" + result.failures.prefix(8).joined(separator: "\n")
+                }
+            } catch {
+                let failure = error.localizedDescription
+                // Recover an interrupted index update before allowing any further
+                // persistence; an old UI snapshot must never restore deleted rows.
+                do {
+                    applyDeletedLibrary(try await fileStore.loadLibrary())
+                    await refreshBackups()
+                    notice = failure
+                } catch {
+                    canPersist = false
+                    libraryLoadState = .failed(error.localizedDescription)
+                    notice = failure
+                }
+            }
+        }
+    }
+
+    private func applyDeletedLibrary(_ library: AudioLibrary) {
+        documents = library.documents
+        folders = library.folders
+        let retained = Set(documents.map(\.id))
+        candidates = candidates.filter { retained.contains($0.key) }
+        appliedCandidateIDs = appliedCandidateIDs.filter { retained.contains($0.key) }
+        appliedReleaseChoices = appliedReleaseChoices.filter { retained.contains($0.key) }
+        localFilesRevision += 1
     }
 
     func updateDraft(_ tags: AudioTags, for id: UUID) {
@@ -238,7 +363,7 @@ final class AppModel: ObservableObject {
     func useCandidate(_ candidate: MetadataCandidate, for id: UUID,
                       releaseChoice: CandidateReleaseChoice? = nil) {
         guard !isWorking, let document = document(id) else { return }
-        begin(L10n.text("Loading match", "正在读取匹配结果"), total: 1)
+        guard begin(L10n.text("Loading match", "正在读取匹配结果"), total: 1) else { return }
         currentFile = document.fileName
         operationTask = Task {
             defer { finish() }
@@ -371,8 +496,8 @@ final class AppModel: ObservableObject {
 
     func importFiles(_ urls: [URL]) {
         guard !isWorking else { return }
+        guard begin(L10n.text("Importing", "正在导入"), total: 0) else { return }
         let scopedURLs = urls.filter { $0.startAccessingSecurityScopedResource() }
-        begin(L10n.text("Importing", "正在导入"), total: 0)
         operationTask = Task {
             defer {
                 scopedURLs.forEach { $0.stopAccessingSecurityScopedResource() }
@@ -416,7 +541,7 @@ final class AppModel: ObservableObject {
         }
         let items = documents.filter { ids.contains($0.id) }
         guard !items.isEmpty else { return }
-        begin(L10n.text("Identifying", "正在识别"), total: items.count)
+        guard begin(L10n.text("Identifying", "正在识别"), total: items.count) else { return }
         let key = apiKey
         let provider = recognitionProvider
         operationTask = Task {
@@ -575,7 +700,7 @@ final class AppModel: ObservableObject {
         guard !isWorking else { return }
         let items = documents.filter { ids.contains($0.id) && $0.hasChanges }
         guard !items.isEmpty else { return }
-        begin(L10n.text("Saving", "正在保存"), total: items.count)
+        guard begin(L10n.text("Saving", "正在保存"), total: items.count) else { return }
         operationTask = Task {
             defer { finish() }
             var failures: [String] = []
@@ -600,7 +725,7 @@ final class AppModel: ObservableObject {
 
     func restore(_ backup: BackupRecord) {
         guard !isWorking else { return }
-        begin(L10n.text("Restoring", "正在恢复"), total: 1)
+        guard begin(L10n.text("Restoring", "正在恢复"), total: 1) else { return }
         currentFile = backup.originalURL.lastPathComponent
         operationTask = Task {
             defer { finish() }
@@ -633,23 +758,35 @@ final class AppModel: ObservableObject {
     func cancelOperation() { operationTask?.cancel() }
 
     func refreshBackups() async {
-        do { backupRecords = try await fileStore.backups() }
+        do {
+            backupRecords = try await fileStore.backups()
+            var missing: Set<UUID> = []
+            for backup in backupRecords {
+                if !(await fileStore.backupAudioExists(backup)) { missing.insert(backup.id) }
+            }
+            missingBackupAudioIDs = missing
+        }
         catch { notice = error.localizedDescription }
     }
 
-    private func begin(_ name: String, total: Int) {
+    private func begin(_ name: String, total: Int) -> Bool {
+        do { activityLease = try LocalLibraryAccess.shared.acquire(localLibraryDirectory) }
+        catch { notice = error.localizedDescription; return false }
         persistenceTask?.cancel()
         notice = nil
         operation = name
         currentFile = ""
         completedCount = 0
         totalCount = total
+        return true
     }
 
     private func finish() {
         operation = nil
         currentFile = ""
         operationTask = nil
+        activityLease?.release()
+        activityLease = nil
         drainLocalImports()
     }
 
@@ -676,8 +813,12 @@ final class AppModel: ObservableObject {
     func persistNow() async {
         // Scene transitions can arrive while the initial actor read is still pending.
         // Never replace an unread or unreadable on-disk index with an empty model.
-        guard canPersist else { return }
-        do { try await fileStore.persistLibrary(AudioLibrary(documents: documents, folders: folders)) }
+        guard canPersist, deletionLease == nil, !isDeletingLocalFiles else { return }
+        do {
+            let lease = try LocalLibraryAccess.shared.acquire(localLibraryDirectory)
+            defer { lease.release() }
+            try await fileStore.persistLibrary(AudioLibrary(documents: documents, folders: folders))
+        }
         catch { notice = error.localizedDescription }
     }
 

@@ -142,13 +142,18 @@ private struct BackupHistoryView: View {
                              ? L10n.text("Full-file backup · older version", "完整文件备份 · 旧版")
                              : L10n.text("Tags and covers · audio file required to restore", "标签和封面备份 · 恢复需保留音频文件"))
                             .font(.caption).foregroundStyle(.secondary)
+                        if model.missingBackupAudioIDs.contains(backup.id) {
+                            Label(L10n.text("Local audio is missing · restore unavailable", "本地音频已删除或缺失 · 无法恢复"), systemImage: "exclamationmark.circle")
+                                .font(.caption).foregroundStyle(.secondary)
+                                .accessibilityIdentifier("backupAudioMissing_\(backup.id)")
+                        }
                         HStack {
                             if backup.restored {
                                 Label(L10n.text("Restored", "已恢复"), systemImage: "checkmark")
                                     .font(.subheadline).foregroundStyle(.secondary)
                             } else {
                                 Button(L10n.text("Restore original", "恢复原文件")) { restoring = backup }
-                                    .disabled(model.isWorking)
+                                    .disabled(model.isWorking || model.missingBackupAudioIDs.contains(backup.id))
                             }
                             Spacer()
                             ShareLink(item: backup.backupURL) {

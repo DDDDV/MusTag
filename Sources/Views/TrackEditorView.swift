@@ -2,6 +2,7 @@ import SwiftUI
 
 struct TrackEditorView: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
     let documentID: UUID
     @State private var showsReview = false
     @State private var showsDiscard = false
@@ -122,8 +123,17 @@ struct TrackEditorView: View {
                                 Label(L10n.text("Discard draft", "撤销草稿修改"), systemImage: "arrow.uturn.backward")
                             }
                             .disabled(!document.hasChanges || model.isWorking)
+                            Button(role: .destructive) {
+                                focusedField = nil
+                                model.prepareDeletion(documentIDs: [documentID])
+                            } label: {
+                                Label(L10n.text("Delete local file", "删除本地文件"), systemImage: "trash")
+                            }
+                            .disabled(!model.canDeleteLocalFiles)
+                            .accessibilityIdentifier("trackDeleteButton")
                         } label: { Image(systemName: "ellipsis") }
                         .accessibilityLabel(L10n.text("More options", "更多操作"))
+                        .accessibilityIdentifier("trackMoreButton")
                     }
                 }
                 .safeAreaInset(edge: .bottom) {
@@ -161,6 +171,9 @@ struct TrackEditorView: View {
             } else {
                 ContentUnavailableView(L10n.text("File removed", "文件已移除"), systemImage: "doc")
             }
+        }
+        .onChange(of: model.document(documentID) == nil) { _, missing in
+            if missing { dismiss() }
         }
     }
 

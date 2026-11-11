@@ -18,9 +18,9 @@ private struct LibraryContentsView: View {
     @EnvironmentObject private var model: AppModel
     var folder: AudioFolder? = nil
     @State private var picker: AudioPickerMode?
-    @State private var showsImportSources = false
     @State private var selecting = false
     @State private var selected: Set<UUID> = []
+    @State private var selectedFolders: Set<String> = []
     @State private var review: ReviewRequest?
     @State private var removalIDs: Set<UUID>?
 
@@ -33,7 +33,13 @@ private struct LibraryContentsView: View {
         folder == nil ? model.standaloneDocuments : scopeDocuments
     }
     private var scopeIDs: Set<UUID> { Set(scopeDocuments.map(\.id)) }
-    private var targetIDs: Set<UUID> { selecting ? selected.intersection(scopeIDs) : scopeIDs }
+    private var scopeFolderIDs: Set<String> { folder == nil ? Set(model.folders.map(\.id)) : [] }
+    private var targetIDs: Set<UUID> {
+        guard selecting else { return scopeIDs }
+        let folderFiles = model.documents.filter { !($0.importFolderIDs ?? []).isDisjoint(with: selectedFolders) }
+        return selected.union(folderFiles.map(\.id)).intersection(scopeIDs)
+    }
+    private var allSelected: Bool { targetIDs == scopeIDs && selectedFolders == scopeFolderIDs }
     private var changedTargetIDs: [UUID] {
         let targets = targetIDs
         return scopeDocuments.filter { targets.contains($0.id) && $0.hasChanges }.map(\.id)
@@ -55,9 +61,12 @@ private struct LibraryContentsView: View {
                                 Text(L10n.text("\(scopeDocuments.count) files", "\(scopeDocuments.count) 个文件"))
                                     .foregroundStyle(.secondary)
                                 Spacer()
-                                Button(selected == scopeIDs ? L10n.text("Deselect all", "取消全选") : L10n.text("Select all", "全选")) {
-                                    selected = selected == scopeIDs ? [] : scopeIDs
+                                Button(allSelected ? L10n.text("Deselect all", "取消全选") : L10n.text("Select all", "全选")) {
+                                    let deselect = allSelected
+                                    selected = deselect ? [] : scopeIDs
+                                    selectedFolders = deselect ? [] : scopeFolderIDs
                                 }
+                                .disabled(model.isWorking || model.isPreparingDeletion)
                                 .accessibilityIdentifier("selectAllButton")
                             }
                             .font(.subheadline)
@@ -92,10 +101,11 @@ private struct LibraryContentsView: View {
                 welcomeBrandItem
             } else {
                 ToolbarItem(placement: folder == nil ? .topBarLeading : .topBarTrailing) {
-                    if !scopeDocuments.isEmpty {
+                    if !scopeDocuments.isEmpty || !scopeFolderIDs.isEmpty {
                         Button(selecting ? L10n.text("Done", "完成") : L10n.text("Select", "选择")) {
                             selecting.toggle()
                             selected = []
+                            selectedFolders = []
                         }
                         .disabled(model.isWorking)
                         .accessibilityIdentifier("librarySelectButton")
@@ -111,13 +121,17 @@ private struct LibraryContentsView: View {
         .safeAreaInset(edge: .bottom) {
             if model.isWorking {
                 OperationFooter()
-            } else if !scopeDocuments.isEmpty {
+            } else if !scopeDocuments.isEmpty || (selecting && !scopeFolderIDs.isEmpty) {
                 batchActions
             }
         }
         .onChange(of: scopeIDs) { _, ids in
             selected.formIntersection(ids)
-            if ids.isEmpty { selecting = false }
+            if ids.isEmpty && scopeFolderIDs.isEmpty { selecting = false }
+        }
+        .onChange(of: scopeFolderIDs) { _, ids in
+            selectedFolders.formIntersection(ids)
+            if ids.isEmpty && scopeIDs.isEmpty { selecting = false }
         }
         .sheet(item: $picker) { mode in
             AudioDocumentPicker(mode: mode, onPick: { urls in
@@ -126,7 +140,7 @@ private struct LibraryContentsView: View {
             }, onCancel: { picker = nil })
         }
         .sheet(item: $review) { request in ReviewSheet(documentIDs: request.ids) }
-        .sheet(isPresented: $showsImportSources) { ConnectionsView(isImportSheet: true) }
+        .sheet(isPresented: $model.isShowingImportSources) { ConnectionsView(isImportSheet: true) }
         .confirmationDialog(
             L10n.text("Remove \(removalIDs?.count ?? 0) selected files?", "移除选中的 \(removalIDs?.count ?? 0) 个文件？"),
             isPresented: Binding(get: { removalIDs != nil }, set: { if !$0 { removalIDs = nil } }),
@@ -137,6 +151,7 @@ private struct LibraryContentsView: View {
                 guard !model.isWorking else { return }
                 model.remove(ids.intersection(scopeIDs))
                 selected = []
+                selectedFolders = []
                 selecting = false
             }
             .disabled(model.isWorking)
@@ -190,28 +205,33 @@ private struct LibraryContentsView: View {
             }
             .accessibilityIdentifier("folderEmptyState")
         } else {
-            WelcomeView(isImporting: model.isWorking) { showsImportSources = true }
+            WelcomeView(isImporting: model.isWorking) { model.isShowingImportSources = true }
         }
     }
 
     private func folderRow(_ folder: AudioFolder) -> some View {
         let documents = model.documents(in: folder)
         let ids = Set(documents.map(\.id))
-        let selectedCount = selected.intersection(ids).count
+        let selectedCount = targetIDs.intersection(ids).count
+        let folderSelected = selectedFolders.contains(folder.id)
         return HStack(spacing: 12) {
             if selecting {
                 Button {
-                    if ids.isSubset(of: selected) { selected.subtract(ids) }
-                    else { selected.formUnion(ids) }
+                    if folderSelected {
+                        selectedFolders.remove(folder.id)
+                        selected.subtract(ids)
+                    } else { selectedFolders.insert(folder.id) }
                 } label: {
-                    Image(systemName: selectedCount == 0 ? "circle" : selectedCount == ids.count ? "checkmark.circle.fill" : "minus.circle.fill")
+                    Image(systemName: folderSelected ? "checkmark.circle.fill" : selectedCount > 0 ? "minus.circle.fill" : "circle")
                         .font(.title3)
-                        .foregroundStyle(selectedCount > 0 ? Color.accentColor : .secondary)
+                        .foregroundStyle(folderSelected || selectedCount > 0 ? Color.accentColor : .secondary)
                         .frame(minWidth: 32, minHeight: 44)
                 }
                 .buttonStyle(.borderless)
-                .disabled(ids.isEmpty || model.isWorking)
-                .accessibilityLabel(L10n.text("Select files in \(folder.name)", "选择“\(folder.name)”中的文件"))
+                .disabled(model.isWorking || model.isPreparingDeletion)
+                .accessibilityIdentifier("folderSelection_\(folder.name)")
+                .accessibilityLabel(L10n.text("Select folder \(folder.name)", "选择文件夹“\(folder.name)”"))
+                .accessibilityAddTraits(folderSelected ? [.isSelected] : [])
                 .accessibilityValue(L10n.text("\(selectedCount) of \(ids.count) selected", "已选 \(selectedCount) 个，共 \(ids.count) 个"))
             }
             NavigationLink(value: folder) {
@@ -249,12 +269,25 @@ private struct LibraryContentsView: View {
             }
             .accessibilityIdentifier("folderRow_\(folder.name)")
         }
-        .swipeActions {
+        .swipeActions(allowsFullSwipe: false) {
             if !selecting {
-                Button(role: .destructive) { model.removeFolder(folder) } label: {
+                Button(role: .destructive) { model.prepareDeletion(folderIDs: [folder.id]) } label: {
+                    Label(L10n.text("Delete local folder", "删除本地文件夹"), systemImage: "trash")
+                }
+                .disabled(!model.canDeleteLocalFiles)
+                .accessibilityIdentifier("folderDelete_\(folder.name)")
+            }
+        }
+        .contextMenu {
+            if !selecting {
+                Button(role: .destructive) { model.prepareDeletion(folderIDs: [folder.id]) } label: {
+                    Label(L10n.text("Delete local folder", "删除本地文件夹"), systemImage: "trash")
+                }
+                .disabled(!model.canDeleteLocalFiles)
+                Button { model.removeFolder(folder) } label: {
                     Label(L10n.text("Remove from list", "从列表移除"), systemImage: "minus.circle")
                 }
-                .disabled(model.isWorking)
+                .disabled(model.isWorking || model.isPreparingDeletion)
             }
         }
     }
@@ -283,11 +316,22 @@ private struct LibraryContentsView: View {
                 AudioRow(document: document, candidateCount: model.candidates[document.id]?.count ?? 0)
             }
             .accessibilityIdentifier("audioRow_\(document.fileName)")
-            .swipeActions {
-                Button(role: .destructive) { model.remove([document.id]) } label: {
+            .swipeActions(allowsFullSwipe: false) {
+                Button(role: .destructive) { model.prepareDeletion(documentIDs: [document.id]) } label: {
+                    Label(L10n.text("Delete local file", "删除本地文件"), systemImage: "trash")
+                }
+                .disabled(!model.canDeleteLocalFiles)
+                .accessibilityIdentifier("songDelete_\(document.fileName)")
+            }
+            .contextMenu {
+                Button(role: .destructive) { model.prepareDeletion(documentIDs: [document.id]) } label: {
+                    Label(L10n.text("Delete local file", "删除本地文件"), systemImage: "trash")
+                }
+                .disabled(!model.canDeleteLocalFiles)
+                Button { removalIDs = [document.id] } label: {
                     Label(L10n.text("Remove from list", "从列表移除"), systemImage: "minus.circle")
                 }
-                .disabled(model.isWorking)
+                .disabled(model.isWorking || model.isPreparingDeletion)
             }
         }
     }
@@ -302,14 +346,29 @@ private struct LibraryContentsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .accessibilityIdentifier("selectedCountLabel")
-                    Spacer()
-                    Button(role: .destructive) { removalIDs = targets } label: {
-                        Label(L10n.text("Remove from list", "从列表移除"), systemImage: "trash")
+                    if !selectedFolders.isEmpty {
+                        Text(L10n.text("\(selectedFolders.count) folders", "\(selectedFolders.count) 个文件夹"))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .accessibilityIdentifier("selectedFolderCountLabel")
                     }
-                    .buttonStyle(.bordered)
-                    .disabled(targets.isEmpty)
+                    Spacer()
+                    Button { removalIDs = targets } label: {
+                        Label(L10n.text("Remove from list", "从列表移除"), systemImage: "minus.circle")
+                    }
+                    .font(.caption)
+                    .disabled(targets.isEmpty || model.isPreparingDeletion)
                     .accessibilityIdentifier("batchRemoveButton")
                 }
+                Button(role: .destructive) {
+                    model.prepareDeletion(documentIDs: selected.intersection(scopeIDs), folderIDs: selectedFolders)
+                } label: {
+                    Label(L10n.text("Delete selected items", "删除所选文件与文件夹"), systemImage: "trash")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .disabled((selected.isEmpty && selectedFolders.isEmpty) || !model.canDeleteLocalFiles)
+                .accessibilityIdentifier("batchDeleteButton")
             }
             if !selecting {
                 Text(folder == nil
@@ -511,7 +570,8 @@ struct OperationFooter: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(model.operation ?? "").font(.subheadline.weight(.semibold))
+                    Text(model.operation ?? L10n.text("Checking local files…", "正在检查本地文件…"))
+                        .font(.subheadline.weight(.semibold))
                     if !model.currentFile.isEmpty {
                         Text(model.currentFile).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     }
@@ -522,8 +582,10 @@ struct OperationFooter: View {
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
-                Button(L10n.text("Stop", "停止")) { model.cancelOperation() }
-                    .font(.subheadline)
+                if model.canCancelOperation {
+                    Button(L10n.text("Stop", "停止")) { model.cancelOperation() }
+                        .font(.subheadline)
+                }
             }
             if model.totalCount > 0 {
                 ProgressView(value: Double(model.completedCount), total: Double(model.totalCount))
