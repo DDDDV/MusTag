@@ -199,6 +199,9 @@ final class AppModel: ObservableObject {
                     let url = folder.appendingPathComponent(name).appendingPathExtension("m4a")
                     try FileManager.default.copyItem(at: fixture, to: url)
                     try NativeMetadataCodec().write(AudioTags(title: name, artist: "Test artist"), to: url)
+                    if name == "Folder Track", ProcessInfo.processInfo.arguments.contains("--ui-testing-with-complete-tags") {
+                        try CoverArtUITestSupport.writeCompleteMetadata(to: url, title: name)
+                    }
                 }
                 let result = try await fileStore.importFiles(from: [fixture, music, other, empty])
                 documents = result.documents
@@ -371,7 +374,11 @@ final class AppModel: ObservableObject {
                 notice = try await applyCandidate(candidate, to: document, releaseChoice: releaseChoice)
                 completedCount = 1
             } catch is CancellationError { }
-            catch { notice = error.localizedDescription }
+            catch {
+                setScrapeStatus(.failed, for: id)
+                setError(error.localizedDescription, for: id)
+                notice = error.localizedDescription
+            }
             // begin() cancels the debounce for earlier manual edits. Keep those
             // edits durable even if loading this candidate fails or is cancelled.
             await persistNow()
@@ -438,10 +445,16 @@ final class AppModel: ObservableObject {
         if let index = documents.firstIndex(where: { $0.id == document.id }) {
             documents[index].draft = tags
             documents[index].draftArtwork = artwork
+            documents[index].draftScrapeStatus = hasCatalog && choice == nil ? .pending : .matched
             if resolved.source == .shazamKit {
                 documents[index].draftShazamAttribution = ShazamAttribution(
                     title: resolved.tags.title, artist: resolved.tags.artist, appleMusicURL: resolved.appleMusicURL,
                     metadata: resolved.shazamMetadata, appleMusicMetadata: resolved.appleMusicMetadata)
+            }
+            // An identical match already describes the saved file. Keep that
+            // success when a later, unrelated manual edit is discarded.
+            if documents[index].isScraped && !documents[index].hasChanges {
+                documents[index].originalScrapeStatus = .matched
             }
             documents[index].error = selectionNotice
             appliedCandidateIDs[document.id] = candidate.id
@@ -455,6 +468,7 @@ final class AppModel: ObservableObject {
         documents[index].draft = documents[index].original
         documents[index].draftArtwork = documents[index].originalArtwork
         documents[index].draftShazamAttribution = documents[index].originalShazamAttribution
+        documents[index].draftScrapeStatus = documents[index].effectiveOriginalScrapeStatus
         documents[index].error = nil
         appliedCandidateIDs.removeValue(forKey: id)
         appliedReleaseChoices.removeValue(forKey: id)
@@ -643,6 +657,7 @@ final class AppModel: ObservableObject {
             try Task.checkCancellation()
             candidates[item.id] = matches
             guard automaticallyApply else {
+                setScrapeStatus(matches.isEmpty ? .failed : .pending, for: item.id)
                 setError(matches.isEmpty ? L10n.text("No match found. Try another recognition provider or edit manually.",
                                                     "未找到匹配，可切换识别服务或手动编辑。") : nil, for: item.id)
                 return .identified
@@ -653,10 +668,12 @@ final class AppModel: ObservableObject {
                 return .applied(needsSelection: candidate.hasAlbumConflict(with: item.original.album),
                                 hasWarning: warning != nil)
             case .belowThreshold:
+                setScrapeStatus(.pending, for: item.id)
                 setError(L10n.text("Best similarity is below 90%. Choose a match manually; your draft was kept.",
                                    "最高相似度低于 90%，请手动选择匹配；已有草稿保持不变。"), for: item.id)
                 return .pending
             case .ambiguous:
+                setScrapeStatus(.pending, for: item.id)
                 setError(provider == .shazamKit
                     ? L10n.text("Shazam returned several matches. Choose one manually; your draft was kept.",
                                 "Shazam 返回了多个匹配，请手动选择；已有草稿保持不变。")
@@ -664,6 +681,7 @@ final class AppModel: ObservableObject {
                                 "存在多个最高相似度匹配，请手动选择；已有草稿保持不变。"), for: item.id)
                 return .pending
             case .noMatch:
+                setScrapeStatus(.failed, for: item.id)
                 setError(L10n.text("No match found. Try another recognition provider or edit manually.",
                                    "未找到匹配，可切换识别服务或手动编辑。"), for: item.id)
                 return .unmatched
@@ -671,9 +689,15 @@ final class AppModel: ObservableObject {
         } catch is CancellationError { return .cancelled }
         catch {
             guard !Task.isCancelled else { return .cancelled }
+            setScrapeStatus(.failed, for: item.id)
             setError(error.localizedDescription, for: item.id)
             return .failed(item.fileName + ": " + error.localizedDescription)
         }
+    }
+
+    private func setScrapeStatus(_ status: ScrapeStatus, for id: UUID) {
+        guard let index = documents.firstIndex(where: { $0.id == id }) else { return }
+        documents[index].draftScrapeStatus = status
     }
 
     private func setRecognitionPhase(_ phase: String, for id: UUID) {
@@ -845,6 +869,9 @@ final class AppModel: ObservableObject {
         try file?.write(from: buffer)
         file = nil
         try NativeMetadataCodec().write(AudioTags(title: "Original title", artist: "Test artist", album: "Test album"), to: url)
+        if ProcessInfo.processInfo.arguments.contains("--ui-testing-with-complete-tags") {
+            try CoverArtUITestSupport.writeCompleteMetadata(to: url, title: "Original title")
+        }
         return url
     }
     #endif

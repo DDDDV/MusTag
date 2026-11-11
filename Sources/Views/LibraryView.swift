@@ -78,17 +78,7 @@ private struct LibraryContentsView: View {
                             }
                         }
                     }
-                    if !visibleDocuments.isEmpty {
-                        Section {
-                            ForEach(visibleDocuments) { document in
-                                audioRow(document)
-                            }
-                        } header: {
-                            Text(folder == nil
-                                 ? L10n.text("Files · \(visibleDocuments.count)", "文件 · \(visibleDocuments.count)")
-                                 : L10n.text("\(visibleDocuments.count) files", "\(visibleDocuments.count) 个文件"))
-                        }
-                    }
+                    groupedAudioSections
                 }
                 .listStyle(.insetGrouped)
             }
@@ -155,6 +145,41 @@ private struct LibraryContentsView: View {
                 "These files will be removed from the MusTag list and their unsaved changes discarded. Original audio files and saved backups will be kept.",
                 "这些文件将从 MusTag 列表移除，尚未保存的修改将丢弃。原始音频文件和已保存的备份会保留。"
             ))
+        }
+    }
+
+    @ViewBuilder
+    private var groupedAudioSections: some View {
+        let documents = visibleDocuments
+        let pending = documents.filter { !$0.isScrapedOrComplete }
+        let completed = documents.filter(\.isScrapedOrComplete)
+        if !pending.isEmpty {
+            audioSection(pending, isCompleted: false)
+        }
+        if !completed.isEmpty {
+            audioSection(completed, isCompleted: true)
+        }
+    }
+
+    private func audioSection(_ documents: [AudioDocument], isCompleted: Bool) -> some View {
+        Section {
+            ForEach(documents) { document in
+                audioRow(document)
+            }
+        } header: {
+            HStack(spacing: 6) {
+                Image(systemName: isCompleted ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                    .foregroundStyle(isCompleted ? Color.green : .orange)
+                    .accessibilityHidden(true)
+                Text(isCompleted
+                     ? L10n.text("Complete tags / scraped", "标签完整 / 已刮削")
+                     : L10n.text("Not scraped / failed", "未刮削 / 刮削失败"))
+                Text("· \(documents.count)")
+            }
+            .font(.subheadline.weight(.semibold))
+            .textCase(nil)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier(isCompleted ? "scrapedSectionHeader" : "pendingScrapeSectionHeader")
         }
     }
 

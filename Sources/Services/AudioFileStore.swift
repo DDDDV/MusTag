@@ -273,6 +273,7 @@ actor AudioFileStore {
         )
         backup.id = backupID
         backup.originalShazamAttribution = document.originalShazamAttribution
+        backup.originalScrapeStatus = document.effectiveOriginalScrapeStatus
         backup.backupHash = backupHash
         backup.libraryRelativePath = try relativeLibraryPath(source)
         var journal = try readJournal()
@@ -306,6 +307,8 @@ actor AudioFileStore {
         updated.originalArtwork = verified.artwork
         updated.draftArtwork = verified.artwork
         updated.originalShazamAttribution = document.draftShazamAttribution
+        updated.originalScrapeStatus = document.effectiveScrapeStatus
+        updated.draftScrapeStatus = document.effectiveScrapeStatus
         updated.artworkVersion = 1
         updated.duration = verified.duration
         updated.sourceHash = writtenHash
@@ -402,6 +405,10 @@ actor AudioFileStore {
         )
         document.originalShazamAttribution = backup.originalShazamAttribution
         document.draftShazamAttribution = backup.originalShazamAttribution
+        let scrapeStatus = backup.originalScrapeStatus
+            ?? (backup.originalShazamAttribution != nil ? ScrapeStatus.matched : .pending)
+        document.originalScrapeStatus = scrapeStatus
+        document.draftScrapeStatus = scrapeStatus
         document.libraryRelativePath = try relativeLibraryPath(source)
         do {
             let existing = try readLibrary().documents.first {
@@ -468,6 +475,8 @@ actor AudioFileStore {
                     local.sourceURL = old.sourceURL ?? old.url
                     local.originalShazamAttribution = old.originalShazamAttribution
                     local.draftShazamAttribution = old.draftShazamAttribution
+                    local.originalScrapeStatus = old.originalScrapeStatus
+                    local.draftScrapeStatus = old.draftScrapeStatus
                     if old.hasArtworkChanges { local.draftArtwork = old.draftArtwork }
                     documents[index] = local
                     url = local.url

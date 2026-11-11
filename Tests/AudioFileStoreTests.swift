@@ -312,10 +312,15 @@ final class AudioFileStoreTests: XCTestCase {
         var document = try await firstDocument(song, store: store)
         document.draft.title = "Corrected"
         document.draft.albumArtist = "Various Artists"
+        document.originalScrapeStatus = .pending
+        document.draftScrapeStatus = .matched
         let (saved, backup) = try await store.save(document)
 
         XCTAssertFalse(saved.hasChanges)
         XCTAssertEqual(saved.original.title, "Corrected")
+        XCTAssertEqual(saved.originalScrapeStatus, .matched)
+        XCTAssertTrue(saved.isScraped)
+        XCTAssertEqual(backup.originalScrapeStatus, .pending)
         XCTAssertEqual(try FixtureCodec().read(from: saved.url).tags.albumArtist, "Various Artists")
         XCTAssertEqual(try Data(contentsOf: song), originalBytes, "Saving must not change the import source")
         XCTAssertEqual(try FixtureCodec.payload(saved.url), "audio samples remain identical")
@@ -325,10 +330,14 @@ final class AudioFileStoreTests: XCTestCase {
         XCTAssertEqual(records.count, 1)
         let loaded = try await store.loadDocuments()
         XCTAssertEqual(loaded.first?.sourceHash, saved.sourceHash)
+        XCTAssertEqual(loaded.first?.originalScrapeStatus, .matched)
+        XCTAssertEqual(loaded.first?.draftScrapeStatus, .matched)
 
         let restored = try await store.restore(backup)
         XCTAssertEqual(try Data(contentsOf: song), originalBytes)
         XCTAssertEqual(restored.original.title, "Original")
+        XCTAssertEqual(restored.effectiveOriginalScrapeStatus, .pending)
+        XCTAssertFalse(restored.isScraped)
         let afterRestore = try await store.backups()
         XCTAssertTrue(afterRestore[0].restored)
         try assertNoTemporaryFiles()
@@ -662,6 +671,8 @@ final class AudioFileStoreTests: XCTestCase {
                                 duration: snapshot.duration, error: nil, sourceHash: try AudioFileStore.fileHash(source),
                                 importFolderIDs: [folder.id])
         old.draft.title = "Pending legacy draft"
+        old.originalScrapeStatus = .pending
+        old.draftScrapeStatus = .matched
         let store = makeStore()
         try await store.persistLibrary(AudioLibrary(documents: [old], folders: [folder]))
 
@@ -670,6 +681,8 @@ final class AudioFileStoreTests: XCTestCase {
         let localFolder = try XCTUnwrap(library.folders.first)
         XCTAssertEqual(local.id, old.id)
         XCTAssertEqual(local.draft, old.draft)
+        XCTAssertEqual(local.originalScrapeStatus, old.originalScrapeStatus)
+        XCTAssertEqual(local.draftScrapeStatus, old.draftScrapeStatus)
         XCTAssertEqual(local.importFolderIDs, old.importFolderIDs)
         XCTAssertEqual(localFolder.id, folder.id)
         XCTAssertEqual(local.url, localFolder.url.appendingPathComponent("Disc 2/song.mp3"))

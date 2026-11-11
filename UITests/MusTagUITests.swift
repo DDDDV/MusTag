@@ -268,6 +268,89 @@ final class MusTagUITests: XCTestCase {
         XCTAssertTrue(app.buttons["audioRow_UI Test.m4a"].exists)
     }
 
+    func testScrapedMusicMovesBelowPendingMusicAndKeepsSelectionAfterRelaunch() {
+        app.launchEnvironment["MUSTAG_UI_TEST_LIBRARY_ID"] = UUID().uuidString
+        app.launchArguments.append("--ui-testing-auto-match")
+        launchWithFolders()
+        let pendingHeader = app.descendants(matching: .any).matching(identifier: "pendingScrapeSectionHeader").firstMatch
+        let scrapedHeader = app.descendants(matching: .any).matching(identifier: "scrapedSectionHeader").firstMatch
+        XCTAssertTrue(pendingHeader.waitForExistence(timeout: 15))
+        XCTAssertFalse(scrapedHeader.exists, "An empty scraped group should be hidden")
+
+        app.buttons["folderRow_Music Folder"].tap()
+        let pendingTrack = app.buttons["audioRow_Nested Track.m4a"]
+        let scrapedTrack = app.buttons["audioRow_Folder Track.m4a"]
+        XCTAssertTrue(scrapedTrack.waitForExistence(timeout: 5))
+        XCTAssertTrue(pendingTrack.exists)
+        app.buttons["librarySelectButton"].tap()
+        scrapedTrack.tap()
+        XCTAssertEqual(app.staticTexts["selectedCountLabel"].label, "1 selected")
+        app.buttons["identifyButton"].tap()
+        let notice = app.alerts["Notice"]
+        XCTAssertTrue(notice.waitForExistence(timeout: 15))
+        notice.buttons["OK"].tap()
+
+        XCTAssertTrue(scrapedHeader.waitForExistence(timeout: 5))
+        XCTAssertTrue(pendingHeader.exists)
+        XCTAssertLessThan(pendingHeader.frame.minY, pendingTrack.frame.minY)
+        XCTAssertLessThan(pendingTrack.frame.minY, scrapedHeader.frame.minY)
+        XCTAssertLessThan(scrapedHeader.frame.minY, scrapedTrack.frame.minY)
+        XCTAssertTrue(scrapedTrack.isSelected, "Moving between groups must keep the selected file")
+        XCTAssertEqual(app.staticTexts["selectedCountLabel"].label, "1 selected")
+        XCTAssertEqual(app.buttons["reviewButton"].label, "Review 1")
+        app.buttons["selectAllButton"].tap()
+        XCTAssertEqual(app.staticTexts["selectedCountLabel"].label, "2 selected")
+        app.buttons["librarySelectButton"].tap()
+        capture("scraped-and-pending-folder-groups")
+
+        app.terminate()
+        app.launchArguments.removeAll { $0 == "--ui-testing-with-folders" }
+        app.launch()
+        let folder = app.buttons["folderRow_Music Folder"]
+        XCTAssertTrue(folder.waitForExistence(timeout: 15))
+        folder.tap()
+        XCTAssertTrue(scrapedHeader.waitForExistence(timeout: 5))
+        XCTAssertTrue(pendingHeader.exists)
+        XCTAssertLessThan(pendingTrack.frame.minY, scrapedTrack.frame.minY)
+        XCTAssertEqual(app.buttons["reviewButton"].label, "Review 1", "Grouping must not save the draft")
+    }
+
+    func testCompleteImportedMetadataJoinsScrapedGroupWithoutMatchingAndSurvivesRelaunch() {
+        app.launchEnvironment["MUSTAG_UI_TEST_LIBRARY_ID"] = UUID().uuidString
+        app.launchArguments = ["--ui-testing", "-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN",
+                               "--ui-testing-with-complete-tags"]
+        launchWithFolders()
+        let pendingHeader = app.descendants(matching: .any).matching(identifier: "pendingScrapeSectionHeader").firstMatch
+        let completedHeader = app.descendants(matching: .any).matching(identifier: "scrapedSectionHeader").firstMatch
+        XCTAssertTrue(completedHeader.waitForExistence(timeout: 15))
+        XCTAssertTrue(app.buttons["audioRow_UI Test.m4a"].exists)
+        XCTAssertFalse(pendingHeader.exists, "A complete standalone file needs no recognition history")
+        XCTAssertFalse(app.buttons["reviewButton"].isEnabled)
+
+        for pass in 0..<2 {
+            let folder = app.buttons["folderRow_Music Folder"]
+            XCTAssertTrue(folder.waitForExistence(timeout: 15))
+            folder.tap()
+            let completeTrack = app.buttons["audioRow_Folder Track.m4a"]
+            let pendingTrack = app.buttons["audioRow_Nested Track.m4a"]
+            XCTAssertTrue(completeTrack.waitForExistence(timeout: 5))
+            XCTAssertTrue(pendingHeader.exists)
+            XCTAssertTrue(completedHeader.exists)
+            XCTAssertLessThan(pendingHeader.frame.minY, pendingTrack.frame.minY)
+            XCTAssertLessThan(pendingTrack.frame.minY, completedHeader.frame.minY)
+            XCTAssertLessThan(completedHeader.frame.minY, completeTrack.frame.minY)
+            XCTAssertFalse(app.buttons["reviewButton"].isEnabled, "Classification must not create tag edits")
+            if pass == 0 {
+                capture("complete-imported-tags-and-pending-music-zh")
+                app.terminate()
+                app.launchArguments.removeAll { $0 == "--ui-testing-with-folders" }
+                app.launch()
+                XCTAssertTrue(completedHeader.waitForExistence(timeout: 15))
+                XCTAssertFalse(pendingHeader.exists)
+            }
+        }
+    }
+
     func testEmptyImportedFolderCanBeOpenedAndReturnedFrom() {
         launchWithFolders()
         let emptyFolder = app.buttons["folderRow_Empty Folder"]
@@ -927,6 +1010,10 @@ final class MusTagUITests: XCTestCase {
         app.launch()
         let audio = app.buttons["audioRow_UI Test.m4a"]
         XCTAssertTrue(audio.waitForExistence(timeout: 10))
+        let pendingHeader = app.descendants(matching: .any).matching(identifier: "pendingScrapeSectionHeader").firstMatch
+        let scrapedHeader = app.descendants(matching: .any).matching(identifier: "scrapedSectionHeader").firstMatch
+        XCTAssertTrue(pendingHeader.exists)
+        XCTAssertFalse(scrapedHeader.exists)
         let batchReview = app.buttons["reviewButton"]
         XCTAssertFalse(batchReview.isEnabled)
         app.buttons["identifyButton"].tap()
@@ -935,6 +1022,8 @@ final class MusTagUITests: XCTestCase {
         XCTAssertTrue(notice.waitForExistence(timeout: 15))
         XCTAssertTrue(notice.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Added to drafts: 1")).firstMatch.exists)
         notice.buttons["OK"].tap()
+        XCTAssertTrue(scrapedHeader.waitForExistence(timeout: 5))
+        XCTAssertFalse(pendingHeader.exists)
         XCTAssertTrue(batchReview.isEnabled)
         XCTAssertEqual(batchReview.label, "Review 1")
         batchReview.tap()
@@ -973,6 +1062,7 @@ final class MusTagUITests: XCTestCase {
         app.navigationBars["Edit tags"].buttons.element(boundBy: 0).tap()
         XCTAssertTrue(app.staticTexts["Matched title"].waitForExistence(timeout: 5))
         XCTAssertFalse(batchReview.isEnabled)
+        XCTAssertTrue(scrapedHeader.exists)
     }
 
     func testSelectedReleaseCoverRequiresReviewThenSavesAndRestores() {

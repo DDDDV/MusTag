@@ -152,6 +152,7 @@ final class ArtworkFlowTests: XCTestCase {
         XCTAssertEqual(reset.draftArtwork, originalCover)
         XCTAssertFalse(reset.hasArtworkChanges)
         XCTAssertTrue(reset.hasChanges)
+        XCTAssertTrue(reset.isScraped)
 
         context.model.useCandidate(candidate(releaseA), for: context.document.id)
         try await waitUntilIdle(context.model)
@@ -161,8 +162,48 @@ final class ArtworkFlowTests: XCTestCase {
         XCTAssertEqual(discarded.draft, context.document.original)
         XCTAssertEqual(discarded.draftArtwork, originalCover)
         XCTAssertFalse(discarded.hasChanges)
+        XCTAssertFalse(discarded.isScraped, "Discarding an unsaved first match must restore the unprocessed group")
         XCTAssertEqual(try Data(contentsOf: context.source), context.originalBytes)
         XCTAssertEqual(try Data(contentsOf: context.document.url), context.originalBytes)
+    }
+
+    @MainActor
+    func testUnchangedAcoustIDMatchSurvivesDiscardAndRestartWithoutWritingAudio() async throws {
+        let context = try await context(originalCover: artwork(color: .red))
+        defer { context.cleanUp() }
+        let store = AudioFileStore(codec: NativeMetadataCodec(), storageDirectory: context.root.appendingPathComponent("State"))
+        try await store.persistLibrary(AudioLibrary(documents: [context.document], folders: []))
+        await context.model.load()
+        let id = context.document.id
+        let match = MetadataCandidate(id: releaseA, tags: context.document.original,
+                                      score: 0.98, detail: "AcoustID", source: .acoustID)
+
+        context.model.useCandidate(match, for: id)
+        try await waitUntilIdle(context.model)
+        let matched = try XCTUnwrap(context.model.document(id))
+        XCTAssertTrue(matched.isScraped)
+        XCTAssertFalse(matched.hasChanges, "An identical match has no audio metadata changes to save")
+        XCTAssertEqual(matched.draftArtwork, context.document.originalArtwork)
+
+        var draft = matched.draft
+        draft.title = "Temporary manual edit"
+        context.model.updateDraft(draft, for: id)
+        XCTAssertEqual(context.model.document(id)?.hasChanges, true)
+        context.model.discardChanges(for: id)
+        let discarded = try XCTUnwrap(context.model.document(id))
+        XCTAssertTrue(discarded.isScraped, "Discarding a later edit must retain the previously accepted identical match")
+        XCTAssertFalse(discarded.hasChanges)
+        XCTAssertEqual(discarded.draft, context.document.original)
+
+        await context.model.persistNow()
+        let reopened = AppModel(fileStore: store)
+        await reopened.load()
+        XCTAssertEqual(reopened.document(id)?.isScraped, true)
+        XCTAssertEqual(reopened.document(id)?.hasChanges, false)
+        XCTAssertEqual(try Data(contentsOf: context.source), context.originalBytes)
+        XCTAssertEqual(try Data(contentsOf: context.document.url), context.originalBytes)
+        let backups = try await store.backups()
+        XCTAssertTrue(backups.isEmpty, "Remembering a match must not rewrite the audio or create a backup")
     }
 
     private func candidate(_ id: String) -> MetadataCandidate {
@@ -276,6 +317,7 @@ final class BatchMatchingFlowTests: XCTestCase {
         XCTAssertEqual(matched.draft.genre, boundary.original.genre, "Empty provider fields keep the previous value")
         XCTAssertEqual(matched.draftArtwork, boundary.originalArtwork)
         XCTAssertEqual(matched.original, boundary.original)
+        XCTAssertTrue(matched.isScraped)
         XCTAssertNotNil(context.model.appliedCandidateIDs[boundary.id])
         XCTAssertEqual(context.model.document(low.id)?.draft, previousDraft)
         XCTAssertNotNil(context.model.document(low.id)?.error)
@@ -284,10 +326,19 @@ final class BatchMatchingFlowTests: XCTestCase {
         XCTAssertEqual(context.model.document(unselected.id)?.draft, unselected.draft)
         XCTAssertNil(context.model.candidates[unselected.id])
         XCTAssertNil(context.model.appliedCandidateIDs[low.id])
+        XCTAssertEqual(context.model.document(low.id)?.effectiveScrapeStatus, .pending)
+        XCTAssertEqual(context.model.document(missing.id)?.effectiveScrapeStatus, .failed)
+        XCTAssertEqual(context.model.document(unselected.id)?.effectiveScrapeStatus, .pending)
         XCTAssertEqual(context.model.completedCount, 3)
         XCTAssertNotNil(context.model.notice)
         let persisted = try await context.store.loadLibrary()
         XCTAssertEqual(persisted.documents.first { $0.id == boundary.id }?.draft, matched.draft)
+        let reopened = AppModel(fileStore: context.store)
+        await reopened.load()
+        XCTAssertEqual(reopened.document(boundary.id)?.isScraped, true,
+                       "AcoustID matches must stay grouped after restart without a Shazam attribution")
+        XCTAssertEqual(reopened.document(low.id)?.isScraped, false)
+        XCTAssertEqual(reopened.document(missing.id)?.effectiveScrapeStatus, .failed)
         try await assertSourcesUnchanged(context)
     }
 
@@ -304,6 +355,7 @@ final class BatchMatchingFlowTests: XCTestCase {
         XCTAssertEqual(context.model.document(document.id)?.draft, draft)
         XCTAssertNil(context.model.appliedCandidateIDs[document.id])
         XCTAssertEqual(context.model.candidates[document.id]?.count, 2)
+        XCTAssertEqual(context.model.document(document.id)?.effectiveScrapeStatus, .pending)
         try await assertSourcesUnchanged(context)
     }
 
@@ -324,9 +376,11 @@ final class BatchMatchingFlowTests: XCTestCase {
 
         XCTAssertEqual(context.model.document(failed.id)?.draft, failed.draft)
         XCTAssertNotNil(context.model.document(failed.id)?.error)
+        XCTAssertEqual(context.model.document(failed.id)?.effectiveScrapeStatus, .failed)
         XCTAssertEqual(context.model.document(basicMatch.id)?.draft.title, "Matched basic")
         XCTAssertEqual(context.model.document(basicMatch.id)?.draftArtwork, basicMatch.originalArtwork)
         XCTAssertNotNil(context.model.appliedCandidateIDs[basicMatch.id])
+        XCTAssertEqual(context.model.document(basicMatch.id)?.isScraped, true)
         XCTAssertEqual(context.model.document(success.id)?.draft.title, "Matched success")
         XCTAssertEqual(context.model.document(success.id)?.draftArtwork, success.originalArtwork)
         XCTAssertEqual(context.model.completedCount, 3)
@@ -361,6 +415,9 @@ final class BatchMatchingFlowTests: XCTestCase {
         let persisted = try await context.store.loadLibrary()
         XCTAssertEqual(persisted.documents.first { $0.id == completed.id }?.draft.title, "Matched completed")
         XCTAssertEqual(persisted.documents.first { $0.id == cancelled.id }?.draft, cancelled.draft)
+        XCTAssertEqual(persisted.documents.first { $0.id == completed.id }?.isScraped, true)
+        XCTAssertEqual(persisted.documents.first { $0.id == cancelled.id }?.effectiveScrapeStatus, .pending)
+        XCTAssertEqual(persisted.documents.first { $0.id == pending.id }?.effectiveScrapeStatus, .pending)
         try await assertSourcesUnchanged(context)
     }
 

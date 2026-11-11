@@ -36,6 +36,10 @@ struct ShazamAttribution: Codable, Equatable, Sendable {
     var appleMusicMetadata: AppleMusicSongMetadata? = nil
 }
 
+enum ScrapeStatus: String, Codable, Sendable {
+    case pending, matched, failed
+}
+
 struct AudioDocument: Identifiable, Codable, Sendable {
     var id = UUID()
     var url: URL
@@ -53,6 +57,9 @@ struct AudioDocument: Identifiable, Codable, Sendable {
     var importFolderIDs: Set<String>? = nil
     var originalShazamAttribution: ShazamAttribution? = nil
     var draftShazamAttribution: ShazamAttribution? = nil
+    // Optional so libraries written before scrape grouping still decode.
+    var originalScrapeStatus: ScrapeStatus? = nil
+    var draftScrapeStatus: ScrapeStatus? = nil
     /// Import provenance only. Saving always targets the owned local copy in `url`.
     var sourceURL: URL? = nil
     /// Relative to Documents/Music, so an app container relocation keeps files usable.
@@ -60,6 +67,19 @@ struct AudioDocument: Identifiable, Codable, Sendable {
     var fileName: String { url.lastPathComponent }
     var hasArtworkChanges: Bool { originalArtwork != draftArtwork }
     var hasChanges: Bool { original != draft || hasArtworkChanges }
+    var effectiveOriginalScrapeStatus: ScrapeStatus {
+        originalScrapeStatus ?? (originalShazamAttribution != nil ? .matched : .pending)
+    }
+    var effectiveScrapeStatus: ScrapeStatus {
+        draftScrapeStatus ?? (draftShazamAttribution != nil ? .matched : .pending)
+    }
+    var isScraped: Bool { effectiveScrapeStatus == .matched }
+    var hasCompleteMetadata: Bool {
+        missingTagFields.isEmpty && !(draftArtwork?.data.isEmpty ?? true)
+    }
+    // Complete imported metadata belongs in the same group without claiming
+    // that a recognition service has processed the file.
+    var isScrapedOrComplete: Bool { isScraped || hasCompleteMetadata }
     var missingTagFields: [TagField] {
         TagField.allCases.filter {
             $0.value(in: draft).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -139,6 +159,7 @@ struct BackupRecord: Identifiable, Codable, Sendable {
     var writtenHash: String
     var restored = false
     var originalShazamAttribution: ShazamAttribution? = nil
+    var originalScrapeStatus: ScrapeStatus? = nil
     // Absent in legacy journals, whose backup is a complete audio file.
     // New archives contain only metadata and have their own integrity hash.
     var backupHash: String? = nil
@@ -199,6 +220,8 @@ struct LibraryImportMerge: Sendable {
             if refreshed.sourceHash == existing.sourceHash {
                 refreshed.originalShazamAttribution = existing.originalShazamAttribution
                 refreshed.draftShazamAttribution = existing.draftShazamAttribution
+                refreshed.originalScrapeStatus = existing.originalScrapeStatus
+                refreshed.draftScrapeStatus = existing.draftScrapeStatus
             }
             if existing.hasChanges {
                 // Rebase only edited fields; retain unrelated changes from the file.
@@ -209,6 +232,7 @@ struct LibraryImportMerge: Sendable {
                 refreshed.draft = draft
                 if existing.hasArtworkChanges { refreshed.draftArtwork = existing.draftArtwork }
                 refreshed.draftShazamAttribution = existing.draftShazamAttribution
+                refreshed.draftScrapeStatus = existing.effectiveScrapeStatus
                 refreshedDrafts += 1
             }
             self.library.documents[index] = refreshed

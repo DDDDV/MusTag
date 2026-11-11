@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import UIKit
 import XCTest
 @testable import MusTag
 
@@ -300,6 +301,8 @@ final class LibraryFlowTests: XCTestCase {
             XCTAssertEqual(refreshed.importFolderIDs, ["old-folder", "new-folder"])
             XCTAssertEqual(refreshed.draftShazamAttribution, attribution)
             XCTAssertEqual(refreshed.originalShazamAttribution, hash == "same" ? attribution : nil)
+            XCTAssertTrue(refreshed.isScraped, "Rebasing a legacy recognized draft must keep its matched classification")
+            XCTAssertEqual(refreshed.effectiveOriginalScrapeStatus, hash == "same" ? .matched : .pending)
             XCTAssertEqual(merged.refreshedDrafts, 1)
         }
         // An unchanged file must not be reported as a retained pending draft.
@@ -308,6 +311,141 @@ final class LibraryFlowTests: XCTestCase {
         let merged = LibraryImportMerge(ImportResult(documents: [existing], failures: []),
                                         into: AudioLibrary(documents: [existing], folders: []))
         XCTAssertEqual(merged.refreshedDrafts, 0)
+    }
+
+    func testScrapeStatusDecodesLegacyDocumentsAndExplicitFailureOverridesAttribution() throws {
+        let attribution = ShazamAttribution(title: "Recognized title", artist: "Recognized artist")
+        var document = AudioDocument(url: root.appendingPathComponent("song.mp3"), bookmark: nil,
+                                     original: AudioTags(title: "Existing title", artist: "Existing artist"),
+                                     draft: AudioTags(title: "Existing title", artist: "Existing artist"),
+                                     duration: 1, error: nil)
+        let encoder = JSONEncoder()
+        let decoder = JSONDecoder()
+        let unprocessed = try decoder.decode(AudioDocument.self, from: encoder.encode(document))
+        XCTAssertNil(unprocessed.originalScrapeStatus)
+        XCTAssertNil(unprocessed.draftScrapeStatus)
+        XCTAssertFalse(unprocessed.isScraped, "Existing tags alone do not prove a successful scrape")
+
+        document.originalShazamAttribution = attribution
+        document.draftShazamAttribution = attribution
+        let legacy = try decoder.decode(AudioDocument.self, from: encoder.encode(document))
+        XCTAssertNil(legacy.originalScrapeStatus)
+        XCTAssertNil(legacy.draftScrapeStatus)
+        XCTAssertEqual(legacy.effectiveOriginalScrapeStatus, .matched)
+        XCTAssertTrue(legacy.isScraped, "Legacy Shazam results must remain in the matched group")
+
+        document.draftScrapeStatus = .failed
+        let failed = try decoder.decode(AudioDocument.self, from: encoder.encode(document))
+        XCTAssertEqual(failed.effectiveScrapeStatus, .failed)
+        XCTAssertFalse(failed.isScraped, "A failed retry must override a retained older attribution")
+    }
+
+    func testCompleteMetadataJoinsScrapedGroupWithoutInventingScrapeHistory() {
+        let tags = AudioTags(title: "Title", artist: "Artist", album: "Album", albumArtist: "Album artist",
+                             year: "2024", trackNumber: "3", discNumber: "1", genre: "Pop")
+        let cover = AudioArtwork(data: Data([1, 2, 3]), mimeType: "image/jpeg")
+        var document = AudioDocument(url: root.appendingPathComponent("complete.mp3"), bookmark: nil,
+                                     original: tags, draft: tags, duration: 1, error: nil,
+                                     originalArtwork: cover, draftArtwork: cover)
+        XCTAssertTrue(document.hasCompleteMetadata)
+        XCTAssertTrue(document.isScrapedOrComplete)
+        XCTAssertFalse(document.isScraped, "A complete imported file does not need a scraping history")
+        XCTAssertNil(document.draftScrapeStatus)
+
+        document.draftScrapeStatus = .failed
+        XCTAssertTrue(document.isScrapedOrComplete, "A failed lookup must not make complete metadata incomplete")
+        for field in TagField.allCases {
+            document.draft = tags
+            field.set(" \n\t ", in: &document.draft)
+            XCTAssertFalse(document.hasCompleteMetadata, field.rawValue)
+            XCTAssertFalse(document.isScrapedOrComplete, field.rawValue)
+        }
+        document.draft = tags
+        document.draftScrapeStatus = nil
+        for version in [1, nil] as [Int?] {
+            document.artworkVersion = version
+            document.draftArtwork = nil
+            XCTAssertFalse(document.hasCompleteMetadata, "A missing or unknown cover does not establish completeness")
+            XCTAssertFalse(document.isScrapedOrComplete)
+        }
+        document.draftArtwork = AudioArtwork(data: Data(), mimeType: "image/jpeg")
+        XCTAssertFalse(document.hasCompleteMetadata, "An empty artwork payload is not a cover")
+
+        document.draft = .empty
+        document.draftScrapeStatus = .matched
+        XCTAssertFalse(document.hasCompleteMetadata)
+        XCTAssertTrue(document.isScrapedOrComplete, "Accepted matches keep their existing group even when provider fields are missing")
+    }
+
+    @MainActor
+    func testCompleteImportedAudioStaysInCompletedGroupAfterRestartAndReimport() async throws {
+        let source = try audio("Already tagged", in: root)
+        let codec = NativeMetadataCodec()
+        let tags = AudioTags(title: "Already tagged", artist: "Artist", album: "Album", albumArtist: "Album artist",
+                             year: "2024", trackNumber: "3", discNumber: "1", genre: "Pop")
+        try codec.write(tags, to: source)
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 8, height: 8)).image { context in
+            UIColor.blue.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 8, height: 8))
+        }
+        try codec.writeArtwork(AudioArtwork(data: try XCTUnwrap(image.pngData()), mimeType: "image/png"), to: source)
+        let originalBytes = try Data(contentsOf: source)
+        let model = await loadedModel()
+        model.importFiles([source])
+        try await waitUntilIdle(model)
+        let imported = try XCTUnwrap(model.documents.first)
+        XCTAssertTrue(imported.isScrapedOrComplete)
+        XCTAssertFalse(imported.hasChanges)
+
+        let reopened = await loadedModel()
+        for refresh in [false, true] {
+            if refresh {
+                reopened.importFiles([source])
+                try await waitUntilIdle(reopened)
+            }
+            XCTAssertEqual(reopened.documents.count, 1)
+            let document = try XCTUnwrap(reopened.document(imported.id))
+            XCTAssertTrue(document.hasCompleteMetadata)
+            XCTAssertTrue(document.isScrapedOrComplete)
+            XCTAssertFalse(document.isScraped)
+            XCTAssertNil(document.originalScrapeStatus)
+            XCTAssertNil(document.draftScrapeStatus)
+            XCTAssertFalse(document.hasChanges)
+            XCTAssertEqual(try Data(contentsOf: document.url), originalBytes)
+            XCTAssertTrue(reopened.backupRecords.isEmpty)
+        }
+        XCTAssertEqual(try Data(contentsOf: source), originalBytes)
+    }
+
+    func testImportMergeRetainsScrapeStateForUnchangedFilesAndRebasedDrafts() {
+        var existing = AudioDocument(url: root.appendingPathComponent("song.mp3"), bookmark: nil,
+                                     original: AudioTags(title: "Original"), draft: AudioTags(title: "Original"),
+                                     duration: 1, error: nil, sourceHash: "original",
+                                     originalScrapeStatus: .matched, draftScrapeStatus: .failed)
+        var incoming = existing
+        incoming.id = UUID()
+        incoming.originalScrapeStatus = nil
+        incoming.draftScrapeStatus = nil
+        func merged() -> AudioDocument {
+            LibraryImportMerge(ImportResult(documents: [incoming], failures: []),
+                               into: AudioLibrary(documents: [existing], folders: [])).library.documents[0]
+        }
+        let unchanged = merged()
+        XCTAssertEqual(unchanged.effectiveOriginalScrapeStatus, .matched)
+        XCTAssertEqual(unchanged.effectiveScrapeStatus, .failed)
+
+        incoming.sourceHash = "externally changed"
+        let replaced = merged()
+        XCTAssertEqual(replaced.effectiveOriginalScrapeStatus, .pending)
+        XCTAssertEqual(replaced.effectiveScrapeStatus, .pending,
+                       "A changed file without pending edits must not inherit stale recognition state")
+
+        existing.draft.title = "My pending title"
+        let rebased = merged()
+        XCTAssertEqual(rebased.draft.title, existing.draft.title)
+        XCTAssertEqual(rebased.effectiveOriginalScrapeStatus, .pending)
+        XCTAssertEqual(rebased.effectiveScrapeStatus, .failed,
+                       "A retained draft must retain the result of its last recognition attempt")
     }
 
     @MainActor

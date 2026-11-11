@@ -52,13 +52,19 @@ final class ShazamFlowTests: XCTestCase {
             XCTAssertEqual(context.model.document(document.id)?.draft.title, "Matched \(document.fileName)")
             XCTAssertEqual(context.model.candidates[document.id]?.first?.tags.title, "Matched \(document.fileName)")
             XCTAssertNotNil(context.model.appliedCandidateIDs[document.id])
+            XCTAssertEqual(context.model.document(document.id)?.effectiveScrapeStatus, .matched)
+            XCTAssertEqual(persisted.documents.first { $0.id == document.id }?.isScraped, true)
             XCTAssertEqual(persisted.documents.first { $0.id == document.id }?.draft.title,
                            "Matched \(document.fileName)")
         }
         for document in [failed, unmatched, unselected] {
             XCTAssertEqual(context.model.document(document.id)?.draft, document.draft)
             XCTAssertNil(context.model.appliedCandidateIDs[document.id])
+            XCTAssertEqual(context.model.document(document.id)?.isScraped, false)
         }
+        XCTAssertEqual(context.model.document(failed.id)?.effectiveScrapeStatus, .failed)
+        XCTAssertEqual(persisted.documents.first { $0.id == unmatched.id }?.effectiveScrapeStatus, .failed)
+        XCTAssertEqual(context.model.document(unselected.id)?.effectiveScrapeStatus, .pending)
         XCTAssertNil(context.model.candidates[unselected.id])
         XCTAssertEqual(context.model.candidates[unmatched.id]?.count, 0)
         XCTAssertTrue(context.model.notice?.contains(L10n.text("Added to drafts: 3", "已填入草稿：3")) == true)
@@ -102,6 +108,8 @@ final class ShazamFlowTests: XCTestCase {
                 ? context.model.document(completed.id)?.draft : draftsBeforeMatching[document.id]
             XCTAssertEqual(context.model.document(document.id)?.draft, expected)
             XCTAssertEqual(persisted.documents.first { $0.id == document.id }?.draft, expected)
+            XCTAssertEqual(persisted.documents.first { $0.id == document.id }?.isScraped,
+                           document.id == completed.id)
             if document.id != completed.id {
                 XCTAssertNil(context.model.appliedCandidateIDs[document.id])
                 XCTAssertNil(context.model.document(document.id)?.error)
@@ -137,6 +145,8 @@ final class ShazamFlowTests: XCTestCase {
             XCTAssertEqual(context.model.document(document.id)?.draft, expected)
             XCTAssertEqual(persisted.documents.first { $0.id == document.id }?.draft, expected)
             XCTAssertEqual(context.model.candidates[document.id]?.first?.tags.title, "Matched \(document.fileName)")
+            XCTAssertEqual(context.model.document(document.id)?.effectiveScrapeStatus, .pending,
+                           "Finding candidates alone must not move a track into the scraped group")
         }
         try await assertBatchFilesUntouched(context, documents: documents, stagedURLs: gate.stagedURLs)
     }
@@ -210,6 +220,7 @@ final class ShazamFlowTests: XCTestCase {
         await reopened.load()
         XCTAssertEqual(reopened.document(document.id)?.draftShazamAttribution, attribution,
                        "Restarting the app must not lose the attribution link")
+        XCTAssertEqual(reopened.document(document.id)?.isScraped, true)
         try await assertOriginalUntouched(context)
     }
 
@@ -233,6 +244,7 @@ final class ShazamFlowTests: XCTestCase {
             XCTAssertEqual(document.draftArtwork, context.document.originalArtwork, "HTTP \(status)")
             XCTAssertNotNil(document.error)
             XCTAssertNotNil(context.model.appliedCandidateIDs[document.id])
+            XCTAssertTrue(document.isScraped, "A cover warning must not discard a successfully applied song match")
             try await assertOriginalUntouched(context)
         }
     }
@@ -257,6 +269,8 @@ final class ShazamFlowTests: XCTestCase {
             XCTAssertEqual(context.model.candidates[document.id]?.count, results.count)
             XCTAssertNil(context.model.appliedCandidateIDs[document.id])
             XCTAssertNotNil(document.error)
+            XCTAssertEqual(document.effectiveScrapeStatus, results.isEmpty ? .failed : .pending)
+            XCTAssertFalse(document.isScraped)
             let persisted = try await context.store.loadLibrary()
             XCTAssertEqual(persisted.documents.first?.draft, draft)
             try await assertOriginalUntouched(context)
@@ -277,8 +291,46 @@ final class ShazamFlowTests: XCTestCase {
         try await waitUntilIdle(context.model)
 
         XCTAssertEqual(context.model.document(context.document.id)?.draft.title, "Second song")
+        XCTAssertEqual(context.model.document(context.document.id)?.isScraped, true)
         XCTAssertEqual(context.model.appliedCandidateIDs[context.document.id], chosen.id)
         XCTAssertNil(chosen.score)
+        try await assertOriginalUntouched(context)
+    }
+
+    @MainActor
+    func testFailedRetryStaysUnprocessedAfterManualEditAndRestart() async throws {
+        let gate = ShazamBatchGate()
+        let context = try await context(matches: [], shazamProvider: { try await gate.match($0) })
+        defer { gate.cancelAll(); context.cleanUp() }
+        let id = context.document.id
+        XCTAssertFalse(context.document.isScraped, "Existing tags do not establish a scraping history")
+
+        context.model.identify([id], automaticallyApply: true)
+        try await waitForBatch { gate.started.count == 1 }
+        gate.succeed(context.document.fileName)
+        try await waitUntilIdle(context.model)
+        XCTAssertEqual(context.model.document(id)?.isScraped, true)
+
+        context.model.identify([id], automaticallyApply: true)
+        try await waitForBatch { gate.started.count == 2 }
+        gate.finish(context.document.fileName, result: .failure(URLError(.cannotConnectToHost)))
+        try await waitUntilIdle(context.model)
+        XCTAssertEqual(context.model.document(id)?.effectiveScrapeStatus, .failed)
+        XCTAssertNotNil(context.model.document(id)?.draftShazamAttribution,
+                        "A failed retry retains the earlier draft without treating it as a new success")
+
+        var draft = try XCTUnwrap(context.model.document(id)).draft
+        draft.title = "Manual correction after failed retry"
+        context.model.updateDraft(draft, for: id)
+        await context.model.persistNow()
+        XCTAssertNil(context.model.document(id)?.error)
+        XCTAssertEqual(context.model.document(id)?.isScraped, false,
+                       "Clearing an error through manual editing must not clear the failed scraping status")
+
+        let reopened = AppModel(fileStore: context.store, preferences: context.preferences)
+        await reopened.load()
+        XCTAssertEqual(reopened.document(id)?.effectiveScrapeStatus, .failed)
+        XCTAssertEqual(reopened.document(id)?.draft, draft)
         try await assertOriginalUntouched(context)
     }
 
@@ -604,11 +656,14 @@ final class ShazamFlowTests: XCTestCase {
         XCTAssertEqual(chosen.appleMusicMetadata, song)
         XCTAssertEqual(context.model.appliedCandidateIDs[initial.id], chosen.id)
         XCTAssertNil(context.model.appliedReleaseChoices[initial.id], "The album choice still needs an explicit decision")
+        XCTAssertEqual(initial.effectiveScrapeStatus, .pending)
+        XCTAssertFalse(initial.isScraped, "Conflicting album details still need a decision")
 
         context.model.useCandidate(chosen, for: initial.id, releaseChoice: .appleMusic)
         try await waitUntilIdle(context.model)
 
         let selected = try XCTUnwrap(context.model.document(initial.id))
+        XCTAssertTrue(selected.isScraped)
         XCTAssertEqual(selected.draft.title, match.title)
         XCTAssertEqual(selected.draft.artist, match.artist)
         XCTAssertEqual(selected.draft.genre, L10n.text("Pop", "流行"))
@@ -627,6 +682,7 @@ final class ShazamFlowTests: XCTestCase {
         try await waitUntilIdle(context.model)
 
         let restored = try XCTUnwrap(context.model.document(selected.id))
+        XCTAssertTrue(restored.isScraped, "Keeping the original release still accepts the recognized song")
         var expected = context.document.original
         expected.title = match.title
         expected.artist = match.artist
@@ -733,6 +789,7 @@ final class ShazamFlowTests: XCTestCase {
         context.model.useCandidate(chosen, for: context.document.id, releaseChoice: .keepOriginal)
         try await waitUntilIdle(context.model)
         let before = try XCTUnwrap(context.model.document(context.document.id))
+        XCTAssertTrue(before.isScraped)
         let started = expectation(description: "Catalog cover started")
         ShazamFlowURLProtocol.handler = { request in
             XCTAssertEqual(request.url, song.artworkURL)
@@ -749,11 +806,14 @@ final class ShazamFlowTests: XCTestCase {
         XCTAssertEqual(after.draft, before.draft)
         XCTAssertEqual(after.draftArtwork, before.draftArtwork)
         XCTAssertEqual(after.draftShazamAttribution, before.draftShazamAttribution)
+        XCTAssertEqual(after.effectiveScrapeStatus, before.effectiveScrapeStatus,
+                       "Cancelling a replacement match must keep the accepted match in its group")
         XCTAssertEqual(context.model.appliedCandidateIDs[after.id], chosen.id)
         XCTAssertEqual(context.model.appliedReleaseChoices[after.id], .keepOriginal)
         let persisted = try await context.store.loadLibrary()
         XCTAssertEqual(persisted.documents.first?.draft, before.draft)
         XCTAssertEqual(persisted.documents.first?.draftArtwork, before.draftArtwork)
+        XCTAssertEqual(persisted.documents.first?.isScraped, true)
         try await assertOriginalUntouched(context)
     }
 

@@ -6,6 +6,18 @@ enum CoverArtUITestSupport {
     static let recordingID = "10000000-0000-0000-0000-000000000001"
     static let lowerRecordingID = "10000000-0000-0000-0000-000000000002"
 
+    static func writeCompleteMetadata(to url: URL, title: String) throws {
+        let codec = NativeMetadataCodec()
+        try codec.write(AudioTags(title: title, artist: "Test artist", album: "Test album",
+                                  albumArtist: "Test artist", year: "2026", trackNumber: "1",
+                                  discNumber: "1", genre: "Pop"), to: url)
+        let data = UIGraphicsImageRenderer(size: CGSize(width: 24, height: 24)).pngData { context in
+            UIColor.systemIndigo.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 24, height: 24))
+        }
+        try codec.writeArtwork(AudioArtwork(data: data, mimeType: "image/png"), to: url)
+    }
+
     static func session() -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [CoverArtUITestProtocol.self]
