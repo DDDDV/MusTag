@@ -67,7 +67,7 @@ final class MusTagUITests: XCTestCase {
         capture("cold-launch-confirmed-empty-library")
     }
 
-    func testEmptyLibraryOffersFilesAndFolderImport() {
+    func testEmptyLibraryOffersAllImportSources() {
         let welcome = app.descendants(matching: .any).matching(identifier: "welcomeScreen").firstMatch
         XCTAssertTrue(welcome.waitForExistence(timeout: 8))
         let tabs = app.tabBars.buttons
@@ -76,6 +76,8 @@ final class MusTagUITests: XCTestCase {
         tabs["Connections"].tap()
         XCTAssertTrue(app.navigationBars["Connections"].waitForExistence(timeout: 3))
         XCTAssertTrue(tabs["Connections"].isSelected)
+        app.buttons["connectionWiFiButton"].tap()
+        XCTAssertTrue(app.navigationBars["Wi-Fi Transfer"].waitForExistence(timeout: 3))
         tabs["Settings"].tap()
         XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 3))
         XCTAssertTrue(tabs["Settings"].isSelected)
@@ -100,8 +102,66 @@ final class MusTagUITests: XCTestCase {
         XCTAssertTrue(faq.waitForExistence(timeout: 3))
 
         add.tap()
-        XCTAssertTrue(app.buttons["chooseFilesButton"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.buttons["chooseFolderButton"].exists)
+        let importNavigation = app.navigationBars["Import music"]
+        XCTAssertTrue(importNavigation.waitForExistence(timeout: 3),
+                      "Welcome import must open the source list even when Connections has a nested page")
+        let list = app.collectionViews.firstMatch
+        capture("welcome-import-sources")
+
+        for identifier in ["connectionFilesButton", "connectionFolderButton"] {
+            let button = app.buttons[identifier]
+            XCTAssertTrue(button.isHittable, identifier)
+            button.tap()
+            let cancel = app.buttons["Cancel"].firstMatch
+            XCTAssertTrue(cancel.waitForExistence(timeout: 8))
+            cancel.tap()
+            expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: cancel)
+            waitForExpectations(timeout: 3)
+            XCTAssertTrue(importNavigation.exists, "Cancelling the picker must return to import sources")
+        }
+
+        app.buttons["connectionWiFiButton"].tap()
+        let wifiNavigation = app.navigationBars["Wi-Fi Transfer"]
+        XCTAssertTrue(wifiNavigation.waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["startWiFiTransferButton"].exists)
+        wifiNavigation.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(importNavigation.waitForExistence(timeout: 3))
+
+        app.buttons["connectionLocalFolderButton"].tap()
+        let localNavigation = app.navigationBars["Local files"]
+        XCTAssertTrue(localNavigation.waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["refreshLocalFilesButton"].exists)
+        localNavigation.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(importNavigation.waitForExistence(timeout: 3))
+
+        for (service, title) in [("webDAV", "WebDAV"), ("smb", "SMB"), ("ftp", "FTP"),
+                                 ("subsonic", "Subsonic"), ("navidrome", "Navidrome"),
+                                 ("feiniu", "FeiNiu Music")] {
+            let row = app.buttons["connectionService_\(service)"]
+            for _ in 0..<4 where !row.isHittable { list.swipeUp() }
+            XCTAssertTrue(row.isHittable, service)
+            row.tap()
+            let editorNavigation = app.navigationBars[title]
+            XCTAssertTrue(editorNavigation.waitForExistence(timeout: 3), service)
+            XCTAssertTrue(app.textFields["connectionAddressField"].exists, service)
+            editorNavigation.buttons["Cancel"].tap()
+            XCTAssertTrue(importNavigation.waitForExistence(timeout: 3))
+        }
+
+        app.buttons["importSourcesDoneButton"].tap()
+        XCTAssertTrue(welcome.waitForExistence(timeout: 3))
+        XCTAssertTrue(tabs["Home"].isSelected)
+        XCTAssertFalse(importNavigation.exists)
+        tabs["Connections"].tap()
+        XCTAssertTrue(wifiNavigation.waitForExistence(timeout: 3),
+                      "Welcome import must preserve the Connections tab's existing navigation")
+        tabs["Home"].tap()
+        add.tap()
+        XCTAssertTrue(importNavigation.waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["connectionFilesButton"].isHittable,
+                      "Reopening welcome import must start at the source list")
+        app.buttons["importSourcesDoneButton"].tap()
+        XCTAssertTrue(welcome.waitForExistence(timeout: 3))
     }
 
     func testConnectionsGroupsAndImportEntrypoints() {

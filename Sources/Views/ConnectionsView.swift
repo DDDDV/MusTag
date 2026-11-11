@@ -2,8 +2,10 @@ import SwiftUI
 
 struct ConnectionsView: View {
     @EnvironmentObject private var model: AppModel
-    @StateObject private var store = ConnectionStore()
-    @StateObject private var downloads = ConnectionDownloads()
+    @EnvironmentObject private var store: ConnectionStore
+    @EnvironmentObject private var downloads: ConnectionDownloads
+    @Environment(\.dismiss) private var dismiss
+    var isImportSheet = false
     @State private var picker: AudioPickerMode?
     @State private var editing: RemoteConnection?
     @State private var removing: RemoteConnection?
@@ -19,7 +21,7 @@ struct ConnectionsView: View {
                     }.accessibilityIdentifier("connectionWiFiButton")
                     NavigationLink { LocalMusicFilesView() } label: {
                         Label(L10n.text("Local music folder", "本机音乐文件夹"), systemImage: "internaldrive")
-                    }
+                    }.accessibilityIdentifier("connectionLocalFolderButton")
                 } header: { Text(L10n.text("Local", "本地")) }
                 footer: { Text(L10n.text("Files are copied to this device before editing. Find saved music in Files → On My iPhone/iPad → MusTag → Music.", "所有文件先复制到本机再编辑。保存后的音乐位于“文件”→“我的 iPhone/iPad”→ MusTag → Music。")) }
                 if !store.connections.isEmpty {
@@ -55,7 +57,15 @@ struct ConnectionsView: View {
                 }
                 if let error = store.error { Text(error).foregroundStyle(.red).font(.footnote) }
             }
-            .navigationTitle(L10n.text("Connections", "连接"))
+            .navigationTitle(isImportSheet ? L10n.text("Import music", "导入音乐") : L10n.text("Connections", "连接"))
+            .toolbar {
+                if isImportSheet {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button(L10n.text("Done", "完成")) { dismiss() }
+                            .accessibilityIdentifier("importSourcesDoneButton")
+                    }
+                }
+            }
             .sheet(item: $picker) { mode in
                 AudioDocumentPicker(mode: mode, onPick: { urls in model.importFiles(urls); picker = nil }, onCancel: { picker = nil })
             }

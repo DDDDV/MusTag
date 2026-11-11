@@ -3,6 +3,8 @@ import SwiftUI
 struct MainTabView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @StateObject private var connectionStore = ConnectionStore()
+    @StateObject private var connectionDownloads = ConnectionDownloads()
 
     var body: some View {
         Group {
@@ -64,5 +66,7 @@ struct MainTabView: View {
         }
         // Keep navigation at the bottom on iPad, while preserving each page's layout traits.
         .environment(\.horizontalSizeClass, .compact)
+        .environmentObject(connectionStore)
+        .environmentObject(connectionDownloads)
     }
 }

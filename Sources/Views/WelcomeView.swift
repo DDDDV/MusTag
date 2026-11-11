@@ -1,10 +1,10 @@
 import SwiftUI
 
-/// The empty library is also the first-run entry point. Importing a file or a
-/// folder naturally replaces this page with the library, without a setup gate.
+/// The empty library is also the first-run entry point. Importing music from
+/// any source naturally replaces this page with the library, without a setup gate.
 struct WelcomeView: View {
     let isImporting: Bool
-    let onImport: (AudioPickerMode) -> Void
+    let onImport: () -> Void
     @Environment(\.colorScheme) private var colorScheme
     @State private var showsFAQ = false
 
@@ -68,16 +68,7 @@ struct WelcomeView: View {
 
     private var actions: some View {
         VStack(spacing: 12) {
-            Menu {
-                Button { onImport(.files) } label: {
-                    Label(L10n.text("Choose files", "选择文件"), systemImage: "doc")
-                }
-                .accessibilityIdentifier("chooseFilesButton")
-                Button { onImport(.folder) } label: {
-                    Label(L10n.text("Choose folder", "选择文件夹"), systemImage: "folder")
-                }
-                .accessibilityIdentifier("chooseFolderButton")
-            } label: {
+            Button(action: onImport) {
                 Label(L10n.text("Import music", "导入音乐"), systemImage: "plus")
                     .font(.headline)
                     .frame(maxWidth: .infinity, minHeight: 24)
@@ -92,6 +83,7 @@ struct WelcomeView: View {
                     }
                     .contentShape(RoundedRectangle(cornerRadius: 17))
             }
+            .buttonStyle(.plain)
             .disabled(isImporting)
             .opacity(isImporting ? 0.6 : 1)
             .accessibilityIdentifier("addAudioButton")

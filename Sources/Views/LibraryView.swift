@@ -18,6 +18,7 @@ private struct LibraryContentsView: View {
     @EnvironmentObject private var model: AppModel
     var folder: AudioFolder? = nil
     @State private var picker: AudioPickerMode?
+    @State private var showsImportSources = false
     @State private var selecting = false
     @State private var selected: Set<UUID> = []
     @State private var review: ReviewRequest?
@@ -125,6 +126,7 @@ private struct LibraryContentsView: View {
             }, onCancel: { picker = nil })
         }
         .sheet(item: $review) { request in ReviewSheet(documentIDs: request.ids) }
+        .sheet(isPresented: $showsImportSources) { ConnectionsView(isImportSheet: true) }
         .confirmationDialog(
             L10n.text("Remove \(removalIDs?.count ?? 0) selected files?", "移除选中的 \(removalIDs?.count ?? 0) 个文件？"),
             isPresented: Binding(get: { removalIDs != nil }, set: { if !$0 { removalIDs = nil } }),
@@ -188,7 +190,7 @@ private struct LibraryContentsView: View {
             }
             .accessibilityIdentifier("folderEmptyState")
         } else {
-            WelcomeView(isImporting: model.isWorking) { picker = $0 }
+            WelcomeView(isImporting: model.isWorking) { showsImportSources = true }
         }
     }
 
