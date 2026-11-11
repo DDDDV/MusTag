@@ -17,7 +17,6 @@ struct LibraryView: View {
 private struct LibraryContentsView: View {
     @EnvironmentObject private var model: AppModel
     var folder: AudioFolder? = nil
-    @State private var picker: AudioPickerMode?
     @State private var selecting = false
     @State private var selected: Set<UUID> = []
     @State private var selectedFolders: Set<String> = []
@@ -114,7 +113,7 @@ private struct LibraryContentsView: View {
             }
             ToolbarItemGroup(placement: .topBarTrailing) {
                 if folder == nil, !isEmpty {
-                    addMenu.disabled(model.isWorking)
+                    addButton.disabled(model.isWorking)
                 }
             }
         }
@@ -132,12 +131,6 @@ private struct LibraryContentsView: View {
         .onChange(of: scopeFolderIDs) { _, ids in
             selectedFolders.formIntersection(ids)
             if ids.isEmpty && scopeIDs.isEmpty { selecting = false }
-        }
-        .sheet(item: $picker) { mode in
-            AudioDocumentPicker(mode: mode, onPick: { urls in
-                model.importFiles(urls)
-                picker = nil
-            }, onCancel: { picker = nil })
         }
         .sheet(item: $review) { request in ReviewSheet(documentIDs: request.ids) }
         .sheet(isPresented: $model.isShowingImportSources) { ConnectionsView(isImportSheet: true) }
@@ -406,17 +399,8 @@ private struct LibraryContentsView: View {
         .background(.bar)
     }
 
-    private var addMenu: some View {
-        Menu {
-            Button { picker = .files } label: {
-                Label(L10n.text("Choose files", "选择文件"), systemImage: "doc")
-            }
-            .accessibilityIdentifier("chooseFilesButton")
-            Button { picker = .folder } label: {
-                Label(L10n.text("Choose folder", "选择文件夹"), systemImage: "folder")
-            }
-            .accessibilityIdentifier("chooseFolderButton")
-        } label: {
+    private var addButton: some View {
+        Button { model.isShowingImportSources = true } label: {
             Label(L10n.text("Add audio", "添加音频"), systemImage: "plus")
         }
         .accessibilityIdentifier("addAudioButton")
