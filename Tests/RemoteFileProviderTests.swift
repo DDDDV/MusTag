@@ -182,6 +182,119 @@ final class RemoteFileProviderTests: XCTestCase {
         }
     }
 
+    func testFTPDownloadsThreeFilesConcurrentlyWithIndependentDataSockets() async throws {
+        try await assertConcurrentDownloads(kind: .ftp)
+    }
+
+    func testDAVDownloadsThreeFilesConcurrentlyWithIndependentOperations() async throws {
+        try await assertConcurrentDownloads(kind: .webDAV)
+    }
+
+    func testFTPTaskCancellationDoesNotCancelAnotherDownload() async throws {
+        try await assertCancellationIsolation(kind: .ftp)
+    }
+
+    func testDAVTaskCancellationDoesNotCancelAnotherDownload() async throws {
+        try await assertCancellationIsolation(kind: .webDAV)
+    }
+
+    func testFTPDisconnectCancelsAllConcurrentDownloads() async throws {
+        try await assertConcurrentDisconnect(kind: .ftp)
+    }
+
+    func testDAVDisconnectCancelsAllConcurrentDownloads() async throws {
+        try await assertConcurrentDisconnect(kind: .webDAV)
+    }
+
+    private func assertConcurrentDownloads(kind: ConnectionKind) async throws {
+        let server = try await RemoteProtocolTestServer.start(mode: kind == .ftp ? .ftp : .http,
+                                                             heldDownloadCount: 3)
+        defer { server.stop() }
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let provider = try makeProvider(kind: kind, server: server)
+        let names = ["first.mp3", "second.mp3", "third.mp3"]
+        let operations = names.map { name in
+            let file = remoteFile(name)
+            return Task {
+                try await provider.download(file, to: directory.appendingPathComponent(name)) { _, _ in }
+            }
+        }
+        defer { operations.forEach { $0.cancel() } }
+        // The server sends no download body until all three requests arrive. A
+        // provider that serializes complete transfers cannot reach this barrier.
+        await fulfillment(of: [server.downloadStarted], timeout: 5)
+        for name in names { XCTAssertFalse(FileManager.default.fileExists(atPath: directory.appendingPathComponent(name).path)) }
+        server.releaseDownloads()
+        for operation in operations { try await operation.value }
+        for name in names {
+            XCTAssertEqual(try Data(contentsOf: directory.appendingPathComponent(name)), RemoteProtocolTestServer.audio(named: name))
+        }
+        XCTAssertEqual(Set(try FileManager.default.contentsOfDirectory(atPath: directory.path)), Set(names))
+        await provider.disconnect()
+    }
+
+    private func assertCancellationIsolation(kind: ConnectionKind) async throws {
+        let server = try await RemoteProtocolTestServer.start(mode: kind == .ftp ? .ftp : .http,
+                                                             heldDownloadCount: 2)
+        defer { server.stop() }
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let provider = try makeProvider(kind: kind, server: server)
+        let cancelledFile = remoteFile("cancelled.mp3")
+        let survivorFile = remoteFile("survivor.mp3")
+        let cancelled = Task {
+            try await provider.download(cancelledFile, to: directory.appendingPathComponent("cancelled.mp3")) { _, _ in }
+        }
+        let survivor = Task {
+            try await provider.download(survivorFile, to: directory.appendingPathComponent("survivor.mp3")) { _, _ in }
+        }
+        defer { cancelled.cancel(); survivor.cancel() }
+        await fulfillment(of: [server.downloadStarted], timeout: 5)
+        cancelled.cancel()
+        do { try await cancelled.value; XCTFail("The cancelled transfer must fail") } catch { }
+        server.releaseDownloads()
+        try await survivor.value
+        XCTAssertEqual(try Data(contentsOf: directory.appendingPathComponent("survivor.mp3")),
+                       RemoteProtocolTestServer.audio(named: "survivor.mp3"))
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: directory.path), ["survivor.mp3"])
+        await provider.disconnect()
+    }
+
+    private func assertConcurrentDisconnect(kind: ConnectionKind) async throws {
+        let server = try await RemoteProtocolTestServer.start(mode: kind == .ftp ? .ftp : .http,
+                                                             heldDownloadCount: 3)
+        defer { server.stop() }
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let provider = try makeProvider(kind: kind, server: server)
+        let operations = ["first.mp3", "second.mp3", "third.mp3"].map { name in
+            let file = remoteFile(name)
+            return Task {
+                try await provider.download(file, to: directory.appendingPathComponent(name)) { _, _ in }
+            }
+        }
+        defer { operations.forEach { $0.cancel() } }
+        await fulfillment(of: [server.downloadStarted], timeout: 5)
+        await provider.disconnect()
+        for operation in operations {
+            do { try await operation.value; XCTFail("Disconnect must interrupt every transfer") } catch { }
+        }
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: directory.path), [])
+    }
+
+    private func makeProvider(kind: ConnectionKind, server: RemoteProtocolTestServer) throws -> any RemoteFileProvider {
+        let scheme = kind == .ftp ? "ftp" : "http"
+        var connection = RemoteConnection(kind: kind, name: "Concurrent test", address: "\(scheme)://127.0.0.1:\(server.port)/dav", username: "user")
+        connection.allowsInsecureConnection = true
+        return try ConnectionProviderFactory.make(connection, password: "password")
+    }
+
+    private func remoteFile(_ name: String) -> RemoteFile {
+        RemoteFile(id: "/" + name, name: name, isDirectory: false,
+                   size: Int64(RemoteProtocolTestServer.audio(named: name).count))
+    }
+
     private func temporaryDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("RemoteProviderTests-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
@@ -196,40 +309,44 @@ private final class RemoteProtocolTestServer: @unchecked Sendable {
         var isHTTP: Bool { self == .http || self == .httpStall }
     }
     static let audio = Data("ID3-test-audio".utf8)
+    static func audio(named name: String) -> Data {
+        if name == "track.mp3" { return audio }
+        // Different sizes and bytes reveal data connections paired with the
+        // wrong control session, even when every transfer reports success.
+        return Data(("ID3-" + String(repeating: name, count: 2_000)).utf8)
+    }
     let downloadStarted = XCTestExpectation(description: "Download request received")
     let redirectRequested = XCTestExpectation(description: "HTTP redirect response sent")
     let mode: Mode
     let listener: NWListener
-    let dataListener: NWListener?
     private let queue = DispatchQueue(label: "MusTag.RemoteProtocolTests")
     private var connections: [NWConnection] = []
-    private var passive: NWConnection?
-    private var pending: (Data, NWConnection)?
-    var port: UInt16 { listener.port!.rawValue }
-    private init(mode: Mode) throws {
-        self.mode = mode
-        listener = try NWListener(using: .tcp, on: .any)
-        dataListener = mode.isHTTP ? nil : try NWListener(using: .tcp, on: .any)
+    private var ftpPeers: [ObjectIdentifier: FTPPeer] = [:]
+    private let holdsDownloads: Bool
+    private var heldTransfers: [() -> Void] = []
+    private final class FTPPeer {
+        let control: NWConnection
+        var listener: NWListener?
+        var passive: NWConnection?
+        var pending: Data?
+        init(control: NWConnection) { self.control = control }
     }
-    static func start(mode: Mode) async throws -> RemoteProtocolTestServer {
-        let server = try RemoteProtocolTestServer(mode: mode)
-        if let data = server.dataListener {
-            data.newConnectionHandler = { [weak server] connection in
-                guard let server else { connection.cancel(); return }
-                server.connections.append(connection)
-                connection.stateUpdateHandler = { [weak server] state in
-                    guard case .ready = state, let server else { return }
-                    server.passive = connection; server.flushData()
-                }
-                connection.start(queue: server.queue)
-            }
-            try await server.start(data)
-        }
+    var port: UInt16 { listener.port!.rawValue }
+    private init(mode: Mode, heldDownloadCount: Int) throws {
+        self.mode = mode
+        holdsDownloads = heldDownloadCount > 0
+        listener = try NWListener(using: .tcp, on: .any)
+        downloadStarted.expectedFulfillmentCount = max(1, heldDownloadCount)
+    }
+    static func start(mode: Mode, heldDownloadCount: Int = 0) async throws -> RemoteProtocolTestServer {
+        let server = try RemoteProtocolTestServer(mode: mode, heldDownloadCount: heldDownloadCount)
         server.listener.newConnectionHandler = { [weak server] connection in
             guard let server else { connection.cancel(); return }
             server.connections.append(connection)
+            if !server.mode.isHTTP { server.ftpPeers[ObjectIdentifier(connection)] = FTPPeer(control: connection) }
             connection.stateUpdateHandler = { [weak server] state in
                 guard case .ready = state, let server else { return }
+                connection.stateUpdateHandler = nil
                 if !server.mode.isHTTP { server.send("220 Test FTP\r\n", to: connection) }
                 server.receive(connection, buffered: Data())
             }
@@ -252,8 +369,24 @@ private final class RemoteProtocolTestServer: @unchecked Sendable {
     }
     func stop() {
         queue.async { [self] in
-            listener.cancel(); dataListener?.cancel(); connections.forEach { $0.cancel() }
+            listener.cancel()
+            ftpPeers.values.forEach { $0.listener?.cancel() }
+            connections.forEach { $0.stateUpdateHandler = nil; $0.cancel() }
+            heldTransfers.removeAll()
+            ftpPeers.removeAll()
+            connections.removeAll()
         }
+    }
+    func releaseDownloads() {
+        queue.async { [self] in
+            let transfers = heldTransfers
+            heldTransfers.removeAll()
+            transfers.forEach { $0() }
+        }
+    }
+    private func deliverDownload(_ transfer: @escaping () -> Void) {
+        if holdsDownloads { heldTransfers.append(transfer) }
+        else { transfer() }
     }
     private func send(_ value: String, to connection: NWConnection) {
         connection.send(content: Data(value.utf8), completion: .contentProcessed { _ in })
@@ -278,12 +411,21 @@ private final class RemoteProtocolTestServer: @unchecked Sendable {
                     }
                     let redirect = fields.first == "GET" && path == "/dav/redirect.mp3"
                     if redirect { self.redirectRequested.fulfill() }
-                    let isAudio = fields.first == "GET" && path == "/dav/track.mp3"
-                    let body = isAudio ? Self.audio : Data()
+                    let isAudio = fields.first == "GET" && path?.hasPrefix("/dav/") == true
+                        && path?.hasSuffix(".mp3") == true && !redirect
+                    let body = isAudio ? Self.audio(named: (path! as NSString).lastPathComponent) : Data()
                     var response = redirect ? "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:\(self.port)/dav/track.mp3\r\n"
                         : (isAudio ? "HTTP/1.1 200 OK\r\n" : "HTTP/1.1 404 Not Found\r\n")
                     response += "Content-Length: \(body.count)\r\nConnection: close\r\n\r\n"
-                    connection.send(content: Data(response.utf8) + body, contentContext: .finalMessage, isComplete: true, completion: .contentProcessed { _ in })
+                    if isAudio {
+                        self.send(response, to: connection)
+                        self.downloadStarted.fulfill()
+                        self.deliverDownload {
+                            connection.send(content: body, contentContext: .finalMessage, isComplete: true, completion: .contentProcessed { _ in })
+                        }
+                    } else {
+                        connection.send(content: Data(response.utf8), contentContext: .finalMessage, isComplete: true, completion: .contentProcessed { _ in })
+                    }
                     return
                 }
             } else {
@@ -297,25 +439,65 @@ private final class RemoteProtocolTestServer: @unchecked Sendable {
         }
     }
     private func command(_ text: String, control: NWConnection) {
+        guard let peer = ftpPeers[ObjectIdentifier(control)] else { return }
         switch text.split(separator: " ").first {
         case "USER": send("331 Password required\r\n", to: control)
         case "PASS": send("230 Logged in\r\n", to: control)
         case "TYPE", "OPTS": send("200 OK\r\n", to: control)
-        case "EPSV": send("229 Passive (|||\(dataListener!.port!.rawValue)|)\r\n", to: control)
+        case "EPSV": openPassiveListener(for: peer)
         case "MLSD":
             send("150 Opening data\r\n", to: control)
-            pending = (Data("type=file;size=\(Self.audio.count); track.mp3\r\n".utf8), control); flushData()
+            peer.pending = Data("type=file;size=\(Self.audio.count); track.mp3\r\n".utf8)
+            flushData(peer)
         case "RETR":
             send("150 Opening data\r\n", to: control)
             downloadStarted.fulfill()
             if mode == .ftpStall { return }
-            pending = (Self.audio, control); flushData()
+            let path = String(text.dropFirst(5))
+            let body = Self.audio(named: (path as NSString).lastPathComponent)
+            deliverDownload { [weak self, weak peer] in
+                guard let self, let peer else { return }
+                peer.pending = body
+                self.flushData(peer)
+            }
         default: send("502 Unsupported\r\n", to: control)
         }
     }
-    private func flushData() {
-        guard let data = passive, let (bytes, control) = pending else { return }
-        passive = nil; pending = nil
+    private func openPassiveListener(for peer: FTPPeer) {
+        do {
+            peer.listener?.cancel()
+            let listener = try NWListener(using: .tcp, on: .any)
+            peer.listener = listener
+            listener.newConnectionHandler = { [weak self, weak peer] connection in
+                guard let self, let peer else { connection.cancel(); return }
+                self.connections.append(connection)
+                connection.stateUpdateHandler = { [weak self, weak peer] state in
+                    guard case .ready = state, let self, let peer else { return }
+                    connection.stateUpdateHandler = nil
+                    peer.passive = connection
+                    self.flushData(peer)
+                }
+                connection.start(queue: self.queue)
+            }
+            listener.stateUpdateHandler = { [weak self, weak peer] state in
+                guard let self, let peer else { return }
+                switch state {
+                case .ready:
+                    listener.stateUpdateHandler = nil
+                    self.send("229 Passive (|||\(listener.port!.rawValue)|)\r\n", to: peer.control)
+                case .failed:
+                    listener.stateUpdateHandler = nil
+                    self.send("425 Cannot open data connection\r\n", to: peer.control)
+                default: break
+                }
+            }
+            listener.start(queue: queue)
+        } catch { send("425 Cannot open data connection\r\n", to: peer.control) }
+    }
+    private func flushData(_ peer: FTPPeer) {
+        guard let data = peer.passive, let bytes = peer.pending else { return }
+        peer.passive = nil; peer.pending = nil
+        let control = peer.control
         data.send(content: bytes, contentContext: .finalMessage, isComplete: true, completion: .contentProcessed { [weak self] _ in
             guard let self else { return }
             self.send(self.mode == .ftpFailure ? "426 Transfer failed\r\n" : "226 Transfer complete\r\n", to: control)

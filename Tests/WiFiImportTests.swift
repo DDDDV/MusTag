@@ -1,4 +1,5 @@
 import Foundation
+import JavaScriptCore
 import Network
 import XCTest
 @testable import MusTag
@@ -150,6 +151,130 @@ final class WiFiImportTests: XCTestCase {
         XCTAssertTrue(running.events.imported.isEmpty)
     }
 
+    func testThreeConcurrentSameNamedUploadsHaveIndependentStagingAndDestinations() async throws {
+        let bytes = try Data(contentsOf: fixture())
+        let initialStaging = wifiStagingFiles()
+        let running = try await startServer()
+        defer { running.server.stop() }
+        let clients = (0..<3).map { _ in WiFiTestTCPClient(port: running.port) }
+        defer { clients.forEach { $0.cancel() } }
+        for client in clients {
+            try await client.connect()
+            try await client.send(uploadHeader(running, path: "Album/Same.mp3", length: bytes.count) + bytes.prefix(100))
+        }
+        try await waitUntil("All three uploads must be receiving before any finishes") {
+            self.wifiStagingFiles().subtracting(initialStaging).count == 3
+        }
+        XCTAssertTrue(running.events.imported.isEmpty)
+
+        // Complete out of submission order, with all three connections still live.
+        for index in [2, 0, 1] { try await clients[index].send(Data(bytes.dropFirst(100))) }
+        async let first = clients[0].readToEnd()
+        async let second = clients[1].readToEnd()
+        async let third = clients[2].readToEnd()
+        let responses = try await (first, second, third)
+        for response in [responses.0, responses.1, responses.2] {
+            XCTAssertTrue(String(decoding: response, as: UTF8.self).hasPrefix("HTTP/1.1 200"))
+        }
+        let imported = running.events.imported
+        XCTAssertEqual(Set(imported.map(\.lastPathComponent)), ["Same.mp3", "Same (2).mp3", "Same (3).mp3"])
+        XCTAssertEqual(imported.count, 3)
+        for url in imported { XCTAssertEqual(try Data(contentsOf: url), bytes) }
+        try await waitUntil("Completed uploads left staging files") {
+            self.wifiStagingFiles().subtracting(initialStaging).isEmpty
+        }
+    }
+
+    func testConcurrentCorruptUploadDoesNotInterruptOtherFiles() async throws {
+        let bytes = try Data(contentsOf: fixture())
+        let initialStaging = wifiStagingFiles()
+        let running = try await startServer()
+        defer { running.server.stop() }
+        let clients = (0..<3).map { _ in WiFiTestTCPClient(port: running.port) }
+        defer { clients.forEach { $0.cancel() } }
+        let bodies = [bytes, Data(repeating: 0, count: bytes.count), bytes]
+        for (index, client) in clients.enumerated() {
+            try await client.connect()
+            try await client.send(uploadHeader(running, path: "File-\(index).mp3", length: bodies[index].count)
+                                  + bodies[index].prefix(100))
+        }
+        try await waitUntil("All three uploads must overlap") {
+            self.wifiStagingFiles().subtracting(initialStaging).count == 3
+        }
+        for index in [1, 2, 0] { try await clients[index].send(Data(bodies[index].dropFirst(100))) }
+        for (index, client) in clients.enumerated() {
+            let response = String(decoding: try await client.readToEnd(), as: UTF8.self)
+            XCTAssertTrue(response.hasPrefix(index == 1 ? "HTTP/1.1 400" : "HTTP/1.1 200"))
+        }
+        XCTAssertEqual(Set(running.events.imported.map(\.lastPathComponent)), ["File-0.mp3", "File-2.mp3"])
+        XCTAssertEqual(audioFiles().count, 2)
+        try await waitUntil("A failed concurrent upload left staging files") {
+            self.wifiStagingFiles().subtracting(initialStaging).isEmpty
+        }
+    }
+
+    @MainActor
+    func testUploadPageLimitsConcurrencyContinuesAfterFailureAndAggregatesProgress() async throws {
+        let running = try await startServer()
+        defer { running.server.stop() }
+        let session = session()
+        defer { session.invalidateAndCancel() }
+        let (page, _) = try await session.data(for: request(running, path: nil))
+        let html = String(decoding: page, as: UTF8.self)
+        let start = try XCTUnwrap(html.range(of: "<script>"))
+        let end = try XCTUnwrap(html.range(of: "</script>", range: start.upperBound..<html.endIndex))
+        let context = try XCTUnwrap(JSContext())
+        context.exceptionHandler = { _, exception in XCTFail(exception?.toString() ?? "JavaScript exception") }
+        context.evaluateScript("""
+        const elements={status:{textContent:''},summary:{textContent:''},progress:{value:0,max:1}};
+        const controls=[{disabled:false,value:'selection'},{disabled:false,value:''}];
+        const document={getElementById:id=>elements[id],querySelectorAll:()=>controls};
+        const location={search:'?key=test'};
+        function URLSearchParams(){this.get=()=> 'test'}
+        const requests=[];let active=0,peak=0;
+        function XMLHttpRequest(){
+          this.upload={};this.open=()=>{};this.setRequestHeader=()=>{};
+          this.send=file=>{this.file=file;requests.push(this);active++;peak=Math.max(peak,active)};
+        }
+        function complete(index,status){
+          const request=requests[index];active--;request.status=status;
+          request.responseText=status===200?'OK':'Invalid audio';request.onload();
+        }
+        const testFiles=Array.from({length:5},(_,i)=>({name:'Track-'+i+'.mp3',size:100}));
+        testFiles.push({name:'Ignore.txt',size:900});
+        """)
+        context.evaluateScript(String(html[start.upperBound..<end.lowerBound]))
+        context.evaluateScript("upload(testFiles);upload(testFiles)")
+        XCTAssertEqual(context.evaluateScript("requests.length")?.toInt32(), 3, "Duplicate submissions must not start another batch")
+        XCTAssertEqual(context.evaluateScript("peak")?.toInt32(), 3)
+        XCTAssertEqual(context.evaluateScript("controls.every(input=>input.disabled)")?.toBool(), true)
+        context.evaluateScript("requests[0].upload.onprogress({loaded:20});requests[1].upload.onprogress({loaded:30});requests[2].upload.onprogress({loaded:40})")
+        XCTAssertEqual(context.evaluateScript("elements.progress.value")?.toInt32(), 90)
+        XCTAssertEqual(context.evaluateScript("elements.progress.max")?.toInt32(), 500)
+
+        context.evaluateScript("complete(2,400)")
+        try await waitUntil("A failed upload must free a slot for the next file") {
+            context.evaluateScript("requests.length")?.toInt32() == 4
+        }
+        context.evaluateScript("requests[2].upload.onprogress({loaded:100})")
+        XCTAssertEqual(context.evaluateScript("elements.progress.value")?.toInt32(), 90, "Late progress must not change a finished file")
+        context.evaluateScript("complete(0,200)")
+        try await waitUntil("A completed upload must immediately start the remaining file") {
+            context.evaluateScript("requests.length")?.toInt32() == 5
+        }
+        context.evaluateScript("complete(3,200);complete(1,200);complete(4,200)")
+        try await waitUntil("Inputs must be enabled after every worker finishes") {
+            context.evaluateScript("controls.every(input=>!input.disabled)")?.toBool() == true
+        }
+        XCTAssertEqual(context.evaluateScript("peak")?.toInt32(), 3)
+        XCTAssertEqual(context.evaluateScript("active")?.toInt32(), 0)
+        XCTAssertEqual(context.evaluateScript("elements.progress.value")?.toInt32(), 440)
+        let summary = try XCTUnwrap(context.evaluateScript("elements.summary.textContent")?.toString())
+        XCTAssertTrue(summary.contains("Completed 5/5"))
+        XCTAssertTrue(summary.contains("Saved 4"))
+        XCTAssertTrue(summary.contains("Failed 1"))
+    }
+
     func testDisconnectedPartialHTTPUploadIsRemoved() async throws {
         let bytes = try Data(contentsOf: fixture())
         let initialStaging = wifiStagingFiles()
@@ -168,20 +293,24 @@ final class WiFiImportTests: XCTestCase {
         XCTAssertTrue(running.events.imported.isEmpty)
     }
 
-    func testStoppingServerCancelsInFlightUploadAndRemovesStaging() async throws {
+    func testStoppingServerCancelsAllConcurrentUploadsAndRemovesStaging() async throws {
         let bytes = try Data(contentsOf: fixture())
         let initialStaging = wifiStagingFiles()
         let running = try await startServer()
         defer { running.server.stop() }
-        let client = WiFiTestTCPClient(port: running.port)
-        defer { client.cancel() }
-        try await client.connect()
-        try await client.send(uploadHeader(running, path: "Interrupted.mp3", length: bytes.count) + bytes.prefix(100))
-        try await waitUntil("Server never began staging the upload") { !self.wifiStagingFiles().subtracting(initialStaging).isEmpty }
+        let clients = (0..<3).map { _ in WiFiTestTCPClient(port: running.port) }
+        defer { clients.forEach { $0.cancel() } }
+        for (index, client) in clients.enumerated() {
+            try await client.connect()
+            try await client.send(uploadHeader(running, path: "Interrupted-\(index).mp3", length: bytes.count) + bytes.prefix(100))
+        }
+        try await waitUntil("Server must stage all three uploads") { self.wifiStagingFiles().subtracting(initialStaging).count == 3 }
         running.server.stop()
         try await waitUntil("Stopped server left a staging file") { self.wifiStagingFiles().subtracting(initialStaging).isEmpty }
         XCTAssertTrue(audioFiles().isEmpty)
         XCTAssertTrue(running.events.imported.isEmpty)
+        let deletion = try LocalLibraryAccess.shared.acquire(library, deleting: true)
+        deletion.release()
     }
 
     private func startServer() async throws -> WiFiTestRunningServer {

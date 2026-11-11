@@ -45,20 +45,34 @@ actor LocalDownloadRepository {
         try checkBatchSpace(totalSize: max(0, expectedSize ?? 0), largestFile: max(0, expectedSize ?? 0))
     }
 
-    func checkBatchSpace(totalSize: Int64, largestFile: Int64) throws {
+    func checkBatchSpace(totalSize: Int64, largestFile: Int64, concurrentTemporarySize: Int64? = nil) throws {
         let lease = try LocalLibraryAccess.shared.acquire(libraryDirectory)
         defer { lease.release() }
         try rejectSymlink(libraryDirectory)
         try manager.createDirectory(at: libraryDirectory, withIntermediateDirectories: true)
         let capacity = try libraryDirectory.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
             .volumeAvailableCapacityForImportantUsage
-        let reserve: Int64 = 32 * 1_024 * 1_024
+        let required = try Self.requiredCapacity(totalSize: totalSize, largestFile: largestFile,
+                                                 concurrentTemporarySize: concurrentTemporarySize)
         guard let capacity else { return }
-        guard largestFile <= (Int64.max - reserve) / 2,
-              totalSize <= Int64.max - largestFile * 2 - reserve,
-              capacity >= totalSize + largestFile * 2 + reserve else {
-            throw MusTagError.message(L10n.text("Not enough space for this download and local editing.", "本机空间不足，无法下载并保留编辑所需空间。"))
+        guard capacity >= required else { throw Self.insufficientSpace() }
+    }
+
+    nonisolated static func requiredCapacity(totalSize: Int64, largestFile: Int64,
+                                             concurrentTemporarySize: Int64? = nil) throws -> Int64 {
+        // HTTP downloads can temporarily hold both URLSession's file and our copy.
+        // Reserve one extra copy per active transfer, plus room for local editing.
+        var required: Int64 = 32 * 1_024 * 1_024
+        for size in [totalSize, concurrentTemporarySize ?? largestFile, largestFile] {
+            let (sum, overflow) = required.addingReportingOverflow(max(0, size))
+            guard !overflow else { throw insufficientSpace() }
+            required = sum
         }
+        return required
+    }
+
+    nonisolated private static func insufficientSpace() -> MusTagError {
+        .message(L10n.text("Not enough space for this download and local editing.", "本机空间不足，无法下载并保留编辑所需空间。"))
     }
 
     func accept(_ temporaryURL: URL, connection: RemoteConnection, file: RemoteFile,
@@ -191,6 +205,7 @@ actor LocalDownloadRepository {
 
 @MainActor
 final class ConnectionDownloads: ObservableObject {
+    static let maximumConcurrentDownloads = 3
     @Published private(set) var isRunning = false
     @Published private(set) var isScanning = false
     @Published private(set) var currentName = ""
@@ -198,11 +213,25 @@ final class ConnectionDownloads: ObservableObject {
     @Published private(set) var total = 0
     @Published private(set) var receivedBytes: Int64 = 0
     @Published private(set) var expectedBytes: Int64?
+    @Published private(set) var activeCount = 0
     @Published private(set) var failures: [String] = []
     @Published private(set) var summary: String?
     private var task: Task<Void, Never>?
-    private var currentTransferID: UUID?
+    private var activeNames: [Int: String] = [:]
     private let repository: LocalDownloadRepository
+
+    private struct DownloadItem: Sendable {
+        let file: RemoteFile
+        let relativePath: [String]
+    }
+
+    private struct DownloadResult: Sendable {
+        enum Outcome: Sendable {
+            case saved(URL), failed(String), cancelled
+        }
+        let index: Int
+        let outcome: Outcome
+    }
 
     init(repository: LocalDownloadRepository = LocalDownloadRepository()) { self.repository = repository }
 
@@ -220,10 +249,15 @@ final class ConnectionDownloads: ObservableObject {
         summary = nil
         completed = 0
         total = 0
+        receivedBytes = 0
+        expectedBytes = nil
+        activeNames = [:]
+        activeCount = 0
         task = Task { [self] in
             var downloaded: [URL] = []
             defer {
                 isRunning = false; isScanning = false; task = nil; currentName = ""
+                activeNames = [:]; activeCount = 0
                 lease.release()
                 if !downloaded.isEmpty {
                     NotificationCenter.default.post(name: .musTagLocalFilesAdded, object: nil,
@@ -236,42 +270,69 @@ final class ConnectionDownloads: ObservableObject {
                 try await collect(entries, names: parentNames, provider: provider, visited: &visited, files: &files)
                 isScanning = false
                 total = files.count
-                var pendingSizes: [Int64] = []
-                for (file, _) in files {
-                    if try await repository.existingFile(connection: connection, file: file) == nil {
-                        pendingSizes.append(max(0, file.size ?? 0))
-                    }
-                }
-                let knownSize = pendingSizes.reduce(Int64(0)) { result, value in
-                    let (sum, overflow) = result.addingReportingOverflow(max(0, value))
-                    return overflow ? Int64.max : sum
-                }
-                try await repository.checkBatchSpace(totalSize: knownSize, largestFile: pendingSizes.max() ?? 0)
-                for (file, relativePath) in files {
+                var pending: [DownloadItem] = []
+                for (file, path) in files {
                     try Task.checkCancellation()
-                    currentName = file.name; receivedBytes = 0; expectedBytes = file.size
-                    let temporary = FileManager.default.temporaryDirectory
-                        .appendingPathComponent("MusTag-download-" + UUID().uuidString)
-                        .appendingPathExtension((file.name as NSString).pathExtension)
-                    defer { try? FileManager.default.removeItem(at: temporary) }
-                    do {
-                        if let existing = try await repository.existingFile(connection: connection, file: file) {
-                            downloaded.append(existing)
-                        } else {
-                            try await repository.checkSpace(for: file.size)
-                            try await download(file, provider: provider, to: temporary)
-                            try Task.checkCancellation()
-                            let local = try await repository.accept(temporary, connection: connection, file: file,
-                                                                    relativeComponents: relativePath)
-                            downloaded.append(local)
-                        }
-                    } catch is CancellationError { throw CancellationError() }
-                    catch {
-                        if Task.isCancelled { throw CancellationError() }
-                        failures.append(file.name + ": " + error.localizedDescription)
+                    if let existing = try await repository.existingFile(connection: connection, file: file) {
+                        downloaded.append(existing)
+                    } else {
+                        pending.append(DownloadItem(file: file, relativePath: path))
                     }
-                    completed += 1
                 }
+                completed = downloaded.count
+                let pendingSizes = pending.map { max(0, $0.file.size ?? 0) }
+                try await repository.checkBatchSpace(
+                    totalSize: DownloadProgressBuffer.sum(pendingSizes), largestFile: pendingSizes.max() ?? 0,
+                    concurrentTemporarySize: DownloadProgressBuffer.sum(Array(pendingSizes.sorted(by: >)
+                        .prefix(Self.maximumConcurrentDownloads))))
+                let progress = DownloadProgressBuffer(expectedSizes: pending.map { $0.file.size })
+                publishProgress(progress)
+                // One timer for the batch; packet callbacks only update a locked buffer.
+                let refreshTask = Task { [weak self] in
+                    while !Task.isCancelled {
+                        do { try await Task.sleep(for: .milliseconds(100)) }
+                        catch { return }
+                        self?.publishProgress(progress)
+                    }
+                }
+                defer { refreshTask.cancel(); publishProgress(progress) }
+                var stopped = false
+                await withTaskGroup(of: DownloadResult.self) { group in
+                    var nextIndex = 0
+                    for (index, item) in pending.prefix(Self.maximumConcurrentDownloads).enumerated() {
+                        guard group.addTaskUnlessCancelled(operation: { [repository] in
+                            await Self.transfer(item, index: index, connection: connection, provider: provider,
+                                                repository: repository, progress: progress)
+                        }) else { break }
+                        activeNames[index] = item.file.name
+                        nextIndex += 1
+                    }
+                    publishActiveNames()
+                    while let result = await group.next() {
+                        activeNames[result.index] = nil
+                        switch result.outcome {
+                        case .saved(let local): downloaded.append(local); completed += 1
+                        case .failed(let message): failures.append(message); completed += 1
+                        case .cancelled: stopped = true
+                        }
+                        if Task.isCancelled || stopped {
+                            group.cancelAll()
+                        } else if nextIndex < pending.count {
+                            let index = nextIndex, item = pending[index]
+                            if group.addTaskUnlessCancelled(operation: { [repository] in
+                                await Self.transfer(item, index: index, connection: connection, provider: provider,
+                                                    repository: repository, progress: progress)
+                            }) {
+                                activeNames[index] = item.file.name
+                                nextIndex += 1
+                            }
+                        }
+                        publishActiveNames()
+                    }
+                }
+                // Drain all children before releasing the library lease, including on cancellation.
+                try Task.checkCancellation()
+                if stopped { throw CancellationError() }
                 summary = total == 0
                     ? L10n.text("No MP3, FLAC or M4A files found.", "没有找到 MP3、FLAC 或 M4A 文件。")
                     : L10n.text("\(downloaded.count) files ready locally. \(failures.count) errors. Edit on Home, or manage and delete in Connections → Local music folder.", "\(downloaded.count) 个文件已就绪，\(failures.count) 项失败。可在首页编辑，或前往“连接”→“本机音乐文件夹”管理和删除。")
@@ -284,31 +345,40 @@ final class ConnectionDownloads: ObservableObject {
         }
     }
 
-    private func download(_ file: RemoteFile, provider: any RemoteFileProvider, to destination: URL) async throws {
-        let transferID = UUID()
-        currentTransferID = transferID
-        let progress = DownloadProgressBuffer()
-        // A callback can arrive for every network packet. Keep one latest value
-        // instead of enqueuing a main-actor task (and publishing twice) per packet.
-        let refreshTask = Task { [weak self] in
-            while !Task.isCancelled {
-                do { try await Task.sleep(for: .milliseconds(100)) }
-                catch { return }
-                guard let self, self.currentTransferID == transferID else { return }
-                self.publishProgress(progress)
-            }
-        }
+    nonisolated private static func transfer(_ item: DownloadItem, index: Int, connection: RemoteConnection,
+                                             provider: any RemoteFileProvider, repository: LocalDownloadRepository,
+                                             progress: DownloadProgressBuffer) async -> DownloadResult {
+        let file = item.file
+        let temporary = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MusTag-download-" + UUID().uuidString)
+            .appendingPathExtension((file.name as NSString).pathExtension)
         defer {
-            refreshTask.cancel()
-            if currentTransferID == transferID {
-                // Short transfers and failures must still show their latest bytes.
-                publishProgress(progress)
-                currentTransferID = nil
+            progress.finish(index: index)
+            try? FileManager.default.removeItem(at: temporary)
+        }
+        do {
+            try Task.checkCancellation()
+            try await repository.checkSpace(for: file.size)
+            try await provider.download(file, to: temporary) { bytes, expected in
+                progress.update(index: index, bytes: bytes, expected: expected)
             }
+            let size = try temporary.resourceValues(forKeys: [.fileSizeKey]).fileSize.map(Int64.init)
+            progress.finish(index: index, completedBytes: size)
+            try Task.checkCancellation()
+            let local = try await repository.accept(temporary, connection: connection, file: file,
+                                                    relativeComponents: item.relativePath)
+            return DownloadResult(index: index, outcome: .saved(local))
+        } catch is CancellationError {
+            return DownloadResult(index: index, outcome: .cancelled)
+        } catch {
+            return DownloadResult(index: index, outcome: Task.isCancelled ? .cancelled
+                : .failed(file.name + ": " + error.localizedDescription))
         }
-        try await provider.download(file, to: destination) { bytes, expected in
-            progress.update(bytes: bytes, expected: expected)
-        }
+    }
+
+    private func publishActiveNames() {
+        activeCount = activeNames.count
+        currentName = activeNames.sorted { $0.key < $1.key }.map(\.value).joined(separator: "\n")
     }
 
     private func publishProgress(_ progress: DownloadProgressBuffer) {
@@ -341,28 +411,63 @@ final class ConnectionDownloads: ObservableObject {
     }
 }
 
-/// Each transfer owns its buffer, so late callbacks cannot change another file's
-/// progress, even when the next file has the same display name.
+/// Each batch owns its buffer. Completed transfers reject late callbacks, even
+/// when another active file has the same name. Packet updates stay O(1).
 private final class DownloadProgressBuffer: @unchecked Sendable {
     struct Value: Sendable {
         let bytes: Int64
         let expected: Int64?
     }
+    private struct Transfer {
+        var bytes: Int64 = 0
+        var expected: Int64?
+        var finished = false
+    }
 
     private let lock = NSLock()
-    private var latest: Value?
+    private var transfers: [Transfer]
+    private var dirty = true
 
-    func update(bytes: Int64, expected: Int64?) {
+    init(expectedSizes: [Int64?]) {
+        transfers = expectedSizes.map { Transfer(expected: $0.flatMap { $0 >= 0 ? $0 : nil }) }
+    }
+
+    func update(index: Int, bytes: Int64, expected: Int64?) {
         lock.lock()
         defer { lock.unlock() }
-        latest = Value(bytes: bytes, expected: expected)
+        guard !transfers[index].finished else { return }
+        transfers[index].bytes = max(0, bytes)
+        // A missing Content-Length must not discard a known directory-listing size.
+        if let expected, expected >= 0 { transfers[index].expected = expected }
+        dirty = true
+    }
+
+    func finish(index: Int, completedBytes: Int64? = nil) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !transfers[index].finished else { return }
+        if let completedBytes {
+            transfers[index].bytes = completedBytes
+            transfers[index].expected = completedBytes
+        }
+        transfers[index].finished = true
+        dirty = true
     }
 
     func takeLatest() -> Value? {
         lock.lock()
         defer { lock.unlock() }
-        let value = latest
-        latest = nil
-        return value
+        guard dirty else { return nil }
+        dirty = false
+        let expected = transfers.compactMap(\.expected)
+        return Value(bytes: Self.sum(transfers.map(\.bytes)),
+                     expected: expected.count == transfers.count ? Self.sum(expected) : nil)
+    }
+
+    static func sum(_ values: [Int64]) -> Int64 {
+        values.reduce(0) { total, value in
+            let (sum, overflow) = total.addingReportingOverflow(max(0, value))
+            return overflow ? Int64.max : sum
+        }
     }
 }

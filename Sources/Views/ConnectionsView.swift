@@ -294,10 +294,18 @@ private struct DownloadStatusView: View {
     var body: some View {
         if downloads.isRunning {
             Text(downloads.isScanning ? L10n.text("Scanning folders…", "正在扫描文件夹…") : "\(downloads.completed) / \(downloads.total)")
-            Text(downloads.currentName).font(.caption).lineLimit(2)
+            if !downloads.isScanning, downloads.activeCount > 0 {
+                Text(L10n.text("Downloading \(downloads.activeCount) files", "正在下载 \(downloads.activeCount) 个文件"))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Text(downloads.currentName).font(.caption).lineLimit(3)
             if let expected = downloads.expectedBytes, expected > 0, !downloads.isScanning {
                 ProgressView(value: min(Double(downloads.receivedBytes), Double(expected)), total: Double(expected))
             } else { ProgressView() }
+            if !downloads.isScanning, downloads.receivedBytes > 0 {
+                Text(ByteCountFormatter.string(fromByteCount: downloads.receivedBytes, countStyle: .file))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Button(L10n.text("Cancel download", "取消下载"), role: .cancel) { downloads.cancel() }
         }
         if let summary = downloads.summary { Text(summary).font(.footnote).foregroundStyle(.secondary) }

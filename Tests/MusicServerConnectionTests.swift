@@ -46,7 +46,7 @@ final class MusicServerConnectionTests: XCTestCase {
                 case "download.view":
                     XCTAssertEqual(query["id"], "song / 一")
                     XCTAssertNil(query["maxBitRate"])
-                    XCTAssertNil(query["format"])
+                    XCTAssertEqual(query["format"], kind == .navidrome ? "raw" : nil)
                     XCTAssertEqual(request.value(forHTTPHeaderField: "Accept-Encoding"), "identity")
                     return .init(headers: ["Content-Type": "audio/flac", "Content-Length": String(audio.count)], data: audio)
                 default:
@@ -303,6 +303,209 @@ final class MusicServerConnectionTests: XCTestCase {
         await provider.disconnect()
     }
 
+    func testMusicSourcesOverlapDownloadsAndCancelOneWithoutStoppingOthers() async throws {
+        for kind in [ConnectionKind.subsonic, .navidrome, .feiniu] {
+            let audio = Data("fLaC-concurrent-original".utf8)
+            let streamsStarted = expectation(description: "Three \(kind) streams started")
+            streamsStarted.expectedFulfillmentCount = 3
+            let gate = MusicServerReplyGate()
+            defer { gate.release() }
+            MusicServerTestURLProtocol.handler = { request in
+                let query = Self.query(request)
+                let id = query["id"] ?? query["guid"] ?? ""
+                switch request.url?.lastPathComponent {
+                case "password-login": return try .feiniu(["userToken": "token"])
+                case "metadata": return try .feiniu(["track": ["guid": id, "path": "\(id).flac", "size": audio.count]])
+                case "getSong.view": return try .subsonic(["song": ["id": id, "path": "\(id).flac", "size": audio.count]])
+                case "stream", "download.view":
+                    streamsStarted.fulfill()
+                    return .init(headers: ["Content-Type": "audio/flac"], data: audio, gate: gate)
+                default: throw MusicServerTestError.unexpectedRequest
+                }
+            }
+            let provider = try provider(kind)
+            let directory = try temporaryDirectory()
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let tasks = ["a", "b", "c"].map { id in
+                Task {
+                    try await provider.download(Self.track(id, kind: kind, size: audio.count),
+                                                to: directory.appendingPathComponent("\(id).flac")) { _, _ in }
+                }
+            }
+            await fulfillment(of: [streamsStarted], timeout: 3)
+            tasks[0].cancel()
+            do { try await tasks[0].value; XCTFail("The selected transfer must cancel") }
+            catch { XCTAssertTrue(error is CancellationError) }
+            gate.release()
+            for task in tasks.dropFirst() { try await task.value }
+            XCTAssertFalse(FileManager.default.fileExists(atPath: directory.appendingPathComponent("a.flac").path))
+            for id in ["b", "c"] { XCTAssertEqual(try Data(contentsOf: directory.appendingPathComponent("\(id).flac")), audio) }
+            await provider.disconnect()
+        }
+    }
+
+    func testFeiniuCoalescesConcurrentLoginAndCancelsOnlyTheSelectedWaiter() async throws {
+        let audio = Data("fLaC-shared-login".utf8)
+        let loginStarted = expectation(description: "Shared login started")
+        let callersStarted = expectation(description: "All callers started")
+        callersStarted.expectedFulfillmentCount = 3
+        let cancelled = expectation(description: "Cancelled waiter returned before login")
+        let gate = MusicServerReplyGate()
+        defer { gate.release() }
+        let log = MusicServerRequestLog()
+        MusicServerTestURLProtocol.handler = { request in
+            log.append(request)
+            let id = Self.query(request)["guid"] ?? ""
+            switch request.url?.lastPathComponent {
+            case "password-login":
+                loginStarted.fulfill()
+                var reply = try MusicServerTestURLProtocol.Reply.feiniu(["userToken": "shared-token"])
+                reply.gate = gate
+                return reply
+            case "metadata": return try .feiniu(["track": ["guid": id, "path": "\(id).flac", "size": audio.count]])
+            case "stream": return .init(headers: ["Content-Type": "audio/flac"], data: audio)
+            default: throw MusicServerTestError.unexpectedRequest
+            }
+        }
+        let provider = try provider(.feiniu)
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let tasks = ["a", "b", "c"].map { id in
+            Task {
+                callersStarted.fulfill()
+                do {
+                    try await provider.download(Self.track(id, kind: .feiniu, size: audio.count),
+                                                to: directory.appendingPathComponent("\(id).flac")) { _, _ in }
+                } catch {
+                    if id == "a", error is CancellationError { cancelled.fulfill() }
+                    throw error
+                }
+            }
+        }
+        await fulfillment(of: [callersStarted, loginStarted], timeout: 3)
+        // Let the callers enter the actor while the actual HTTP reply stays gated.
+        try await Task.sleep(nanoseconds: 30_000_000)
+        tasks[0].cancel()
+        await fulfillment(of: [cancelled], timeout: 3)
+        XCTAssertEqual(log.requests.filter { $0.httpMethod == "POST" }.count, 1)
+        gate.release()
+        _ = try? await tasks[0].value
+        for task in tasks.dropFirst() { try await task.value }
+        XCTAssertEqual(log.requests.filter { $0.httpMethod == "POST" }.count, 1)
+        await provider.disconnect()
+    }
+
+    func testFeiniuSharesRefreshAndReusesNewTokenForLateUnauthorizedResponse() async throws {
+        let audio = Data("fLaC-refreshed-original".utf8)
+        let rejected = expectation(description: "Three requests use old token")
+        rejected.expectedFulfillmentCount = 3
+        let refreshStarted = expectation(description: "One refresh started")
+        let failures = MusicServerReplyGate(), lateFailure = MusicServerReplyGate(), refresh = MusicServerReplyGate()
+        defer { failures.release(); lateFailure.release(); refresh.release() }
+        let log = MusicServerRequestLog()
+        MusicServerTestURLProtocol.handler = { request in
+            log.append(request)
+            let id = Self.query(request)["guid"] ?? ""
+            switch request.url?.lastPathComponent {
+            case "password-login":
+                let isRefresh = log.requests.filter { $0.httpMethod == "POST" }.count > 1
+                var reply = try MusicServerTestURLProtocol.Reply.feiniu(["userToken": isRefresh ? "new" : "old"])
+                if isRefresh { refreshStarted.fulfill(); reply.gate = refresh }
+                return reply
+            case "metadata":
+                if id != "warm", request.value(forHTTPHeaderField: "Cookie") == "music-token=old" {
+                    rejected.fulfill()
+                    return .init(status: 401, data: Data(), gate: id == "c" ? lateFailure : failures)
+                }
+                return try .feiniu(["track": ["guid": id, "path": "\(id).flac", "size": audio.count]])
+            case "stream": return .init(headers: ["Content-Type": "audio/flac"], data: audio)
+            default: throw MusicServerTestError.unexpectedRequest
+            }
+        }
+        let provider = try provider(.feiniu)
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try await provider.download(Self.track("warm", kind: .feiniu, size: audio.count),
+                                    to: directory.appendingPathComponent("warm.flac")) { _, _ in }
+        let tasks = ["a", "b", "c"].map { id in
+            Task {
+                try await provider.download(Self.track(id, kind: .feiniu, size: audio.count),
+                                            to: directory.appendingPathComponent("\(id).flac")) { _, _ in }
+            }
+        }
+        await fulfillment(of: [rejected], timeout: 3)
+        failures.release()
+        await fulfillment(of: [refreshStarted], timeout: 3)
+        refresh.release()
+        for task in tasks.prefix(2) { try await task.value }
+        lateFailure.release()
+        try await tasks[2].value
+        XCTAssertEqual(log.requests.filter { $0.httpMethod == "POST" }.count, 2)
+        for id in ["a", "b", "c"] { XCTAssertEqual(try Data(contentsOf: directory.appendingPathComponent("\(id).flac")), audio) }
+        await provider.disconnect()
+    }
+
+    func testFeiniuMediaAuthenticationRetriesAtMostOnce() async throws {
+        for alwaysReject in [false, true] {
+            let audio = Data("fLaC-media-retry".utf8)
+            let log = MusicServerRequestLog()
+            MusicServerTestURLProtocol.handler = { request in
+                log.append(request)
+                switch request.url?.lastPathComponent {
+                case "password-login":
+                    return try .feiniu(["userToken": "token-\(log.requests.filter { $0.httpMethod == "POST" }.count)"])
+                case "metadata": return try .feiniu(["track": ["guid": "a", "path": "a.flac", "size": audio.count]])
+                case "stream":
+                    if alwaysReject || request.value(forHTTPHeaderField: "Cookie") == "music-token=token-1" {
+                        return .init(status: 401, data: Data())
+                    }
+                    return .init(headers: ["Content-Type": "audio/flac"], data: audio)
+                default: throw MusicServerTestError.unexpectedRequest
+                }
+            }
+            let provider = try provider(.feiniu)
+            let directory = try temporaryDirectory()
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let destination = directory.appendingPathComponent("a.flac")
+            do {
+                try await provider.download(Self.track("a", kind: .feiniu, size: audio.count), to: destination) { _, _ in }
+                XCTAssertFalse(alwaysReject)
+                XCTAssertEqual(try Data(contentsOf: destination), audio)
+            } catch MusicServerFailure.authentication {
+                XCTAssertTrue(alwaysReject)
+                XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+            }
+            XCTAssertEqual(log.requests.filter { $0.httpMethod == "POST" }.count, 2)
+            XCTAssertEqual(log.requests.filter { $0.url?.lastPathComponent == "stream" }.count, 2)
+            await provider.disconnect()
+        }
+    }
+
+    func testFeiniuCancellationAndDisconnectStopPendingSharedLogin() async throws {
+        for disconnect in [false, true] {
+            let started = expectation(description: "Pending login")
+            let stopped = expectation(description: "Login HTTP request cancelled")
+            MusicServerTestURLProtocol.handler = { _ in
+                started.fulfill()
+                return .init(data: Data(), stalls: true, onStop: { stopped.fulfill() })
+            }
+            let provider = try provider(.feiniu)
+            let task = Task { try await provider.listDirectory(path: "/") }
+            await fulfillment(of: [started], timeout: 3)
+            if disconnect { await provider.disconnect() } else { task.cancel() }
+            do { _ = try await task.value; XCTFail("Pending authentication must cancel") }
+            catch { XCTAssertTrue(error is CancellationError) }
+            await fulfillment(of: [stopped], timeout: 3)
+            await provider.disconnect()
+        }
+    }
+
+    private static func track(_ id: String, kind: ConnectionKind, size: Int) -> RemoteFile {
+        let prefix = kind == .feiniu ? "/feiniu/song/" : "/subsonic/song/"
+        let encoded = Data(id.utf8).base64EncodedString().replacingOccurrences(of: "=", with: "")
+        return RemoteFile(id: prefix + encoded, name: "\(id).flac", isDirectory: false, size: Int64(size))
+    }
+
     private func provider(_ kind: ConnectionKind, address: String = "https://music.example", allowsHTTP: Bool = false) throws -> MusicServerFileProvider {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [MusicServerTestURLProtocol.self]
@@ -348,12 +551,35 @@ private final class MusicServerRequestLog: @unchecked Sendable {
     var requests: [URLRequest] { lock.lock(); defer { lock.unlock() }; return values }
 }
 
+private final class MusicServerReplyGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var opened = false
+    private var pending: [() -> Void] = []
+
+    func enqueue(_ deliver: @escaping () -> Void) {
+        lock.lock()
+        if opened { lock.unlock(); deliver() }
+        else { pending.append(deliver); lock.unlock() }
+    }
+
+    func release() {
+        lock.lock()
+        opened = true
+        let deliveries = pending
+        pending = []
+        lock.unlock()
+        deliveries.forEach { $0() }
+    }
+}
+
 private final class MusicServerTestURLProtocol: URLProtocol {
     struct Reply {
         var status = 200
         var headers: [String: String] = ["Content-Type": "application/json"]
         var data: Data
         var stalls = false
+        var gate: MusicServerReplyGate?
+        var onStop: (() -> Void)?
 
         static func subsonic(_ values: [String: Any]) throws -> Reply {
             var envelope = values
@@ -368,6 +594,9 @@ private final class MusicServerTestURLProtocol: URLProtocol {
 
     private static let lock = NSLock()
     private static var storedHandler: ((URLRequest) throws -> Reply)?
+    private let deliveryLock = NSRecursiveLock()
+    private var stopped = false
+    private var onStop: (() -> Void)?
     static var handler: ((URLRequest) throws -> Reply)? {
         get { lock.lock(); defer { lock.unlock() }; return storedHandler }
         set { lock.lock(); defer { lock.unlock() }; storedHandler = newValue }
@@ -379,12 +608,33 @@ private final class MusicServerTestURLProtocol: URLProtocol {
         do {
             guard let handler = Self.handler else { throw MusicServerTestError.unexpectedRequest }
             let reply = try handler(request)
+            deliveryLock.lock()
+            let alreadyStopped = stopped
+            onStop = alreadyStopped ? nil : reply.onStop
+            deliveryLock.unlock()
+            if alreadyStopped { reply.onStop?(); return }
             if reply.stalls { return }
-            let response = HTTPURLResponse(url: request.url!, statusCode: reply.status, httpVersion: "HTTP/1.1", headerFields: reply.headers)!
-            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-            client?.urlProtocol(self, didLoad: reply.data)
-            client?.urlProtocolDidFinishLoading(self)
+            if let gate = reply.gate { gate.enqueue { [weak self] in self?.deliver(reply) } }
+            else { deliver(reply) }
         } catch { client?.urlProtocol(self, didFailWithError: error) }
     }
-    override func stopLoading() { }
+
+    private func deliver(_ reply: Reply) {
+        deliveryLock.lock()
+        defer { deliveryLock.unlock() }
+        guard !stopped else { return }
+        let response = HTTPURLResponse(url: request.url!, statusCode: reply.status, httpVersion: "HTTP/1.1", headerFields: reply.headers)!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: reply.data)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {
+        deliveryLock.lock()
+        stopped = true
+        let callback = onStop
+        onStop = nil
+        deliveryLock.unlock()
+        callback?()
+    }
 }

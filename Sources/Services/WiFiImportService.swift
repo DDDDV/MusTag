@@ -20,13 +20,13 @@ final class WiFiImportService: ObservableObject {
         do {
             let server = try WiFiImportServer(port: port, repository: LocalDownloadRepository()) { [weak self] event in
                 Task { @MainActor in
-                    guard let self else { return }
                     if case .imported(let url) = event {
-                        if self.generation == generation { self.imported.append(url.lastPathComponent) }
+                        if self?.generation == generation { self?.imported.append(url.lastPathComponent) }
                         NotificationCenter.default.post(name: .musTagLocalFilesAdded, object: nil,
                             userInfo: ["urls": [AudioFileStore.defaultLibraryDirectory.appendingPathComponent("WiFi", isDirectory: true)]])
                         return
                     }
+                    guard let self else { return }
                     guard self.generation == generation else { return }
                     switch event {
                     case .ready(let port, let token):
@@ -83,6 +83,7 @@ final class WiFiImportServer: @unchecked Sendable {
     private let listener: NWListener
     private let queue = DispatchQueue(label: "MusTag.WiFiImport")
     private let repository: LocalDownloadRepository
+    private let spaceBudget: WiFiUploadSpaceBudget
     private let token = UUID().uuidString
     private let event: @Sendable (Event) -> Void
     private var clients: [UUID: WiFiUploadConnection] = [:]
@@ -91,6 +92,7 @@ final class WiFiImportServer: @unchecked Sendable {
     init(port: UInt16, repository: LocalDownloadRepository, event: @escaping @Sendable (Event) -> Void) throws {
         listener = try NWListener(using: .tcp, on: port == 0 ? .any : NWEndpoint.Port(rawValue: port)!)
         self.repository = repository; self.event = event
+        spaceBudget = WiFiUploadSpaceBudget(repository: repository)
         listener.service = NWListener.Service(name: "MusTag", type: "_http._tcp")
     }
     func start() {
@@ -106,7 +108,8 @@ final class WiFiImportServer: @unchecked Sendable {
             guard let self, !self.stopped, self.clients.count < 8 else { connection.cancel(); return }
             let id = UUID()
             let client = WiFiUploadConnection(connection: connection, queue: self.queue, token: self.token,
-                repository: self.repository, imported: { [weak self] url in self?.event(.imported(url)) },
+                repository: self.repository, spaceBudget: self.spaceBudget,
+                imported: { [event = self.event] url in event(.imported(url)) },
                 finished: { [weak self] in self?.clients.removeValue(forKey: id) })
             self.clients[id] = client
             client.start()
@@ -123,6 +126,32 @@ final class WiFiImportServer: @unchecked Sendable {
             active.forEach { $0.cancel() }
         }
     }
+}
+
+/// Admit uploads against all outstanding bodies, including requests still waiting
+/// for their disk-space check. Reservations end after cancellation and final writes.
+private actor WiFiUploadSpaceBudget {
+    private let repository: LocalDownloadRepository
+    private var reservations: [UUID: Int64] = [:]
+
+    init(repository: LocalDownloadRepository) { self.repository = repository }
+
+    func reserve(_ id: UUID, size: Int64) async throws {
+        reservations[id] = size
+        let total = reservations.values.reduce(Int64(0)) { result, value in
+            let (sum, overflow) = result.addingReportingOverflow(value)
+            return overflow ? Int64.max : sum
+        }
+        do {
+            try await repository.checkBatchSpace(totalSize: total, largestFile: reservations.values.max() ?? 0)
+            try Task.checkCancellation()
+        } catch {
+            reservations.removeValue(forKey: id)
+            throw error
+        }
+    }
+
+    func release(_ id: UUID) { reservations.removeValue(forKey: id) }
 }
 
 struct WiFiUploadRequest {
@@ -172,6 +201,8 @@ private final class WiFiUploadConnection: @unchecked Sendable {
     private let queue: DispatchQueue
     private let token: String
     private let repository: LocalDownloadRepository
+    private let spaceBudget: WiFiUploadSpaceBudget
+    private let reservationID = UUID()
     private let imported: @Sendable (URL) -> Void
     private let finished: () -> Void
     private var buffer = Data()
@@ -186,8 +217,10 @@ private final class WiFiUploadConnection: @unchecked Sendable {
     private var timeout: DispatchWorkItem?
 
     init(connection: NWConnection, queue: DispatchQueue, token: String, repository: LocalDownloadRepository,
+         spaceBudget: WiFiUploadSpaceBudget,
          imported: @escaping @Sendable (URL) -> Void, finished: @escaping () -> Void) {
         self.connection = connection; self.queue = queue; self.token = token; self.repository = repository
+        self.spaceBudget = spaceBudget
         self.imported = imported; self.finished = finished
     }
     func start() {
@@ -200,11 +233,21 @@ private final class WiFiUploadConnection: @unchecked Sendable {
     }
     func cancel() {
         guard !done else { return }
-        done = true; timeout?.cancel(); work?.cancel()
+        done = true; timeout?.cancel()
+        let pending = work
+        pending?.cancel()
         activityLease = nil
         try? handle?.close(); handle = nil
-        if let temporary { try? FileManager.default.removeItem(at: temporary) }
+        let staging = temporary
+        temporary = nil
         connection.cancel(); finished()
+        Task { [spaceBudget, reservationID] in
+            // The repository may still be validating this file. Its task retains
+            // the library lease until the final write has stopped.
+            await pending?.value
+            if let staging { try? FileManager.default.removeItem(at: staging) }
+            await spaceBudget.release(reservationID)
+        }
     }
     private func receive() {
         guard !done, !processing else { return }
@@ -239,7 +282,7 @@ private final class WiFiUploadConnection: @unchecked Sendable {
             work = Task { [weak self] in
                 guard let self else { return }
                 do {
-                    try await repository.checkSpace(for: request.length)
+                    try await spaceBudget.reserve(reservationID, size: request.length)
                     try Task.checkCancellation()
                     queue.async { [weak self] in
                         guard let self, !self.done else { return }
@@ -291,10 +334,58 @@ private final class WiFiUploadConnection: @unchecked Sendable {
     <main><h1>MusTag</h1><p>WiFi 传歌 / Transfer music</p><small>MP3 · FLAC · M4A<br>文件将保存在本机 MusTag/Music，可通过“文件”App 查看。<br>Files are saved locally. Existing files are kept.</small>
     <label>选择文件 / Choose files<input id="files" type="file" multiple accept=".mp3,.flac,.m4a"></label>
     <label>选择文件夹 / Choose folder<input id="folder" type="file" webkitdirectory multiple></label>
-    <progress id="progress" value="0" max="100"></progress><pre id="status"></pre></main>
-    <script>const key=new URLSearchParams(location.search).get('key');const status=document.getElementById('status');
-    async function upload(list){document.querySelectorAll('input').forEach(e=>e.disabled=true);for(const file of list){if(!/\\.(mp3|flac|m4a)$/i.test(file.name))continue;const path=file.webkitRelativePath||file.name;status.textContent+='↑ '+path+'\\n';try{await new Promise((resolve,reject)=>{const x=new XMLHttpRequest();x.open('POST','/upload?key='+encodeURIComponent(key)+'&path='+encodeURIComponent(path));x.setRequestHeader('Content-Type','application/octet-stream');x.upload.onprogress=e=>{if(e.lengthComputable)document.getElementById('progress').value=e.loaded/e.total*100};x.onload=()=>x.status===200?resolve():reject(new Error(x.responseText));x.onerror=()=>reject(new Error('连接中断 / Connection interrupted'));x.send(file)});status.textContent+='✓ '+path+'\\n'}catch(e){status.textContent+='✕ '+e.message+'\\n'}}document.querySelectorAll('input').forEach(e=>{e.disabled=false;e.value=''})}
-    document.querySelectorAll('input').forEach(e=>e.onchange=()=>upload(Array.from(e.files)));
+    <progress id="progress" value="0" max="1"></progress><p id="summary" aria-live="polite"></p><pre id="status"></pre></main>
+    <script>
+    const key=new URLSearchParams(location.search).get('key');
+    const status=document.getElementById('status');
+    const progress=document.getElementById('progress');
+    const summary=document.getElementById('summary');
+    const inputs=Array.from(document.querySelectorAll('input'));
+    let uploading=false;
+    async function upload(list){
+      if(uploading)return;
+      const files=list.filter(file=>/\\.(mp3|flac|m4a)$/i.test(file.name));
+      if(!files.length){status.textContent='请选择 MP3、FLAC 或 M4A 文件。 / Choose MP3, FLAC or M4A files.';return}
+      uploading=true;
+      inputs.forEach(input=>input.disabled=true);
+      status.textContent='';
+      const loaded=files.map(()=>0);
+      const totalBytes=files.reduce((sum,file)=>sum+file.size,0);
+      let next=0,completed=0,succeeded=0,failed=0;
+      function render(){
+        const transferred=loaded.reduce((sum,bytes)=>sum+bytes,0);
+        progress.max=Math.max(1,totalBytes);progress.value=transferred;
+        summary.textContent='已完成 / Completed '+completed+'/'+files.length+' · 成功 / Saved '+succeeded+' · 失败 / Failed '+failed+'\\n'
+          +(transferred/1048576).toFixed(1)+' / '+(totalBytes/1048576).toFixed(1)+' MiB';
+      }
+      async function worker(){
+        while(next<files.length){
+          const index=next++,file=files[index],path=file.webkitRelativePath||file.name;
+          status.textContent+='↑ '+path+'\\n';
+          try{
+            await new Promise((resolve,reject)=>{
+              const request=new XMLHttpRequest();let settled=false;
+              function finish(error){if(settled)return;settled=true;error?reject(error):resolve()}
+              request.open('POST','/upload?key='+encodeURIComponent(key)+'&path='+encodeURIComponent(path));
+              request.setRequestHeader('Content-Type','application/octet-stream');
+              request.upload.onprogress=event=>{
+                if(settled)return;
+                loaded[index]=Math.max(loaded[index],Math.min(file.size,event.loaded));render();
+              };
+              request.onload=()=>finish(request.status===200?null:new Error(request.responseText||'上传失败 / Upload failed'));
+              request.onerror=request.onabort=request.ontimeout=()=>finish(new Error('连接中断 / Connection interrupted'));
+              request.send(file);
+            });
+            loaded[index]=file.size;succeeded++;status.textContent+='✓ '+path+'\\n';
+          }catch(error){failed++;status.textContent+='✕ '+path+': '+error.message+'\\n'}
+          finally{completed++;render()}
+        }
+      }
+      render();
+      try{await Promise.all(Array.from({length:Math.min(3,files.length)},()=>worker()))}
+      finally{uploading=false;inputs.forEach(input=>{input.disabled=false;input.value=''})}
+    }
+    inputs.forEach(input=>input.onchange=()=>upload(Array.from(input.files)));
     </script></html>
     """
 }

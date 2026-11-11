@@ -8,6 +8,12 @@ actor MusicServerFileProvider: RemoteFileProvider {
     private let baseURL: URL
     private let http: MusicServerHTTP
     private var feiniuToken: String?
+    private struct FeiniuAuthentication {
+        let id: UUID
+        var task: Task<Void, Never>?
+        var waiters: [UUID: CheckedContinuation<String, Error>]
+    }
+    private var feiniuAuthentication: FeiniuAuthentication?
     private var feiniuAlbums: [RemoteFile]?
     private var feiniuAlbumFiles: [String: [RemoteFile]] = [:]
     private var disconnected = false
@@ -24,6 +30,11 @@ actor MusicServerFileProvider: RemoteFileProvider {
     func disconnect() async {
         disconnected = true
         feiniuToken = nil
+        if let authentication = feiniuAuthentication {
+            feiniuAuthentication = nil
+            authentication.task?.cancel()
+            for waiter in authentication.waiters.values { waiter.resume(throwing: CancellationError()) }
+        }
         feiniuAlbums = nil
         feiniuAlbumFiles = [:]
         http.disconnect()
@@ -65,19 +76,29 @@ actor MusicServerFileProvider: RemoteFileProvider {
             let track = metadata["track"] as? [String: Any] ?? metadata
             let current = Self.feiniuFile(track, guid: guid)
             try Self.validateCurrent(current, comparedTo: file)
-            let token = try await authenticateFeiniu()
-            var request = try feiniuURLRequest("track/stream", parameters: ["guid": guid], token: token)
-            request.setValue("application/octet-stream", forHTTPHeaderField: "Accept")
-            request.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
-            try await http.download(request, to: destination, expectedSize: current.size ?? file.size, progress: progress)
+            var token = try await authenticateFeiniu()
+            for attempt in 0...1 {
+                var request = try feiniuURLRequest("track/stream", parameters: ["guid": guid], token: token)
+                request.setValue("application/octet-stream", forHTTPHeaderField: "Accept")
+                request.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
+                do {
+                    try await http.download(request, to: destination, expectedSize: current.size ?? file.size, progress: progress)
+                    try checkActive()
+                    return
+                } catch MusicServerFailure.authentication where attempt == 0 {
+                    token = try await authenticateFeiniu(replacing: token)
+                }
+            }
         } else {
             let id = try Self.identifier(from: file.id, prefix: "/subsonic/song/")
             let envelope = try await subsonicRequest("getSong.view", parameters: ["id": id])
             guard let song = envelope["song"] as? [String: Any] else { throw MusicServerFailure.invalidResponse }
             let current = Self.subsonicFileValue(song, id: id)
             try Self.validateCurrent(current, comparedTo: file)
-            // download.view returns the original bytes; stream.view may transcode.
-            var request = try subsonicURLRequest("download.view", parameters: ["id": id])
+            // Navidrome can apply a client transcode profile even to download.view.
+            var parameters = ["id": id]
+            if connection.kind == .navidrome { parameters["format"] = "raw" }
+            var request = try subsonicURLRequest("download.view", parameters: parameters)
             request.setValue("application/octet-stream", forHTTPHeaderField: "Accept")
             request.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
             try await http.download(request, to: destination, expectedSize: current.size ?? file.size, progress: progress)
@@ -237,9 +258,52 @@ actor MusicServerFileProvider: RemoteFileProvider {
                           unavailableReason: reason?.localizedDescription)
     }
 
-    private func authenticateFeiniu(force: Bool = false) async throws -> String {
+    private func authenticateFeiniu(replacing rejectedToken: String? = nil) async throws -> String {
         try checkActive()
-        if !force, let feiniuToken { return feiniuToken }
+        // A late failure from an old request must reuse the refreshed token.
+        if let feiniuToken, feiniuToken != rejectedToken { return feiniuToken }
+        feiniuToken = nil
+        let waiterID = UUID()
+        return try await withTaskCancellationHandler {
+            let token = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<String, Error>) in
+                guard !Task.isCancelled else { continuation.resume(throwing: CancellationError()); return }
+                if feiniuAuthentication != nil {
+                    feiniuAuthentication?.waiters[waiterID] = continuation
+                    return
+                }
+                let id = UUID()
+                feiniuAuthentication = FeiniuAuthentication(id: id, waiters: [waiterID: continuation])
+                feiniuAuthentication?.task = Task { [self] in
+                    do { finishFeiniuAuthentication(id, result: .success(try await loginFeiniu())) }
+                    catch { finishFeiniuAuthentication(id, result: .failure(error)) }
+                }
+            }
+            try checkActive()
+            return token
+        } onCancel: {
+            Task { await self.cancelFeiniuAuthenticationWaiter(waiterID) }
+        }
+    }
+
+    private func cancelFeiniuAuthenticationWaiter(_ id: UUID) {
+        guard let waiter = feiniuAuthentication?.waiters.removeValue(forKey: id) else { return }
+        waiter.resume(throwing: CancellationError())
+        if feiniuAuthentication?.waiters.isEmpty == true {
+            let task = feiniuAuthentication?.task
+            feiniuAuthentication = nil
+            task?.cancel()
+        }
+    }
+
+    private func finishFeiniuAuthentication(_ id: UUID, result: Result<String, Error>) {
+        guard let authentication = feiniuAuthentication, authentication.id == id else { return }
+        feiniuAuthentication = nil
+        if case .success(let token) = result { feiniuToken = token }
+        for waiter in authentication.waiters.values { waiter.resume(with: result) }
+    }
+
+    private func loginFeiniu() async throws -> String {
+        try checkActive()
         let hash = SHA256.hash(data: Data(password.utf8)).map { String(format: "%02x", $0) }.joined()
         var request = try feiniuURLRequest("user/password-login", parameters: [:], token: nil)
         request.httpMethod = "POST"
@@ -253,7 +317,6 @@ actor MusicServerFileProvider: RemoteFileProvider {
         guard let token = Self.text(data["userToken"]),
               !token.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }),
               !token.contains(";"), !token.contains(",") else { throw MusicServerFailure.authentication }
-        feiniuToken = token
         return token
     }
 
@@ -264,7 +327,7 @@ actor MusicServerFileProvider: RemoteFileProvider {
             try checkActive()
             return try Self.feiniuEnvelope(response)
         } catch MusicServerFailure.authentication {
-            let token = try await authenticateFeiniu(force: true)
+            let token = try await authenticateFeiniu(replacing: token)
             let response = try await http.json(feiniuURLRequest(endpoint, parameters: parameters, token: token))
             try checkActive()
             return try Self.feiniuEnvelope(response)
